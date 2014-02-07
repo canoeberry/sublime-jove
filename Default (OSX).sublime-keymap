@@ -1,0 +1,6 @@
+[
+    {"keys": ["super+f"], "command": "jove_move_word", "args": {"forward": true}},
+    {"keys": ["ctrl+super+f"], "command": "jove_move_sexpr", "args": {"forward": true}},
+    {"keys": ["super+b"], "command": "jove_move_word", "args": {"forward": false}},
+    {"keys": ["ctrl+super+b"], "command": "jove_move_sexpr", "args": {"forward": false}}
+]
