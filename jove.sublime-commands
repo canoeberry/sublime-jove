@@ -1,0 +1,52 @@
+[
+    //
+    // Motion commands: forward/backward word, identifiers (sexpression), beginning/end of file/window,
+    // incremental search, etc./
+    //
+    {"caption": "JOVE - Forward word", "command": "jove_move_word", "args": {"direction": 1}},
+    {"caption": "JOVE - Forward s-expression", "command": "jove_move_sexpr", "args": {"direction": 1}},
+    {"caption": "JOVE - Backward word", "command": "jove_move_word", "args": {"direction": -1}},
+    {"caption": "JOVE - Backward s-expression", "command": "jove_move_sexpr", "args": {"direction": -1}},
+
+    {"caption": "JOVE - Go to end of file", "command": "jove_move_to", "args": {"to": "eof"}},
+    {"caption": "JOVE - Go to beginning of file", "command": "jove_move_to", "args": {"to": "bof"}},
+    {"caption": "JOVE - Go to end of window", "command": "jove_move_to", "args": {"to": "eow"}},
+    {"caption": "JOVE - Go to beginning of window", "command": "jove_move_to", "args": {"to": "bow"}},
+    {"caption": "JOVE - Go to line", "command": "jove_goto_line"},
+
+    {"caption": "JOVE - Open line", "command": "jove_open_line"},
+    {"caption": "JOVE - Center view around point", "command": "jove_center_view"},
+    //
+    // Mark and point, kill region, kill line, yank and yank pop, deletion commands.
+    //
+    {"caption": "JOVE - Set emacs-style mark", "command": "jove_set_mark"},
+    {"caption": "JOVE - Swap point and mark", "command": "jove_swap_point_and_mark"},
+    {"caption": "JOVE - Kill to end of line", "command": "jove_kill_line"},
+    {"caption": "JOVE - Kill region", "command": "jove_kill_region"},
+    {"caption": "JOVE - Copy region", "command": "jove_kill_region", "args": {"is_copy": true}},
+    {"caption": "JOVE - Yank", "command": "jove_yank"},
+    {"caption": "JOVE - Yank Pop", "command": "jove_yank", "args": {"pop": 1}},
+    {"caption": "JOVE - Yank Pop Backwards", "command": "jove_yank", "args": {"pop": -1}},
+    {"caption": "JOVE - Kill word forward", "command": "jove_delete_word", "args": {"direction": 1}},
+    {"caption": "JOVE - Kill word backward", "command": "jove_delete_word", "args": {"direction": -1}},
+    {"caption": "JOVE - Delete white space", "command": "jove_delete_white_space"},
+
+    // emacs-style numeric argument handling
+    {"caption": "JOVE - Emacs style universal argument", "command": "jove_universal_argument", "args": {"value": "by_four"}},
+    {"caption": "JOVE - Supply digit argument", "command": "jove_universal_argument", "args": {"value": "negative"}},
+    {"caption": "JOVE - Supply digit argument 1", "command": "jove_universal_argument", "args": {"value": 1}},
+    {"caption": "JOVE - Supply digit argument 2", "command": "jove_universal_argument", "args": {"value": 2}},
+    {"caption": "JOVE - Supply digit argument 3", "command": "jove_universal_argument", "args": {"value": 3}},
+    {"caption": "JOVE - Supply digit argument 4", "command": "jove_universal_argument", "args": {"value": 4}},
+    {"caption": "JOVE - Supply digit argument 5", "command": "jove_universal_argument", "args": {"value": 5}},
+    {"caption": "JOVE - Supply digit argument 6", "command": "jove_universal_argument", "args": {"value": 6}},
+    {"caption": "JOVE - Supply digit argument 7", "command": "jove_universal_argument", "args": {"value": 7}},
+    {"caption": "JOVE - Supply digit argument 8", "command": "jove_universal_argument", "args": {"value": 8}},
+    {"caption": "JOVE - Supply digit argument 9", "command": "jove_universal_argument", "args": {"value": 9}},
+    {"caption": "JOVE - Supply digit argument 0", "command": "jove_universal_argument", "args": {"value": 0}},
+
+    {"caption": "JOVE - Quit all open panels, overlays and selections", "command": "jove_quit"},
+
+    {"caption": "JOVE - Convert PLIST to JSON", "command": "jove_convert_plist_to_json"},
+    {"caption": "JOVE - Convert JSON to PLIST", "command": "jove_convert_json_to_plist"},
+]
