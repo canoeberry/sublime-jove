@@ -36,8 +36,11 @@ that are for Python 3 and that might be a show-stopper for Sublime 2, at least f
     * Center current line in view. With numeric argument, put the current line at the Nth line on the screen.
     * Delete white space around point on current line.
     * I assume origami is installed, which is a package for splitting windows ala emacs. It's not right but an OK start.
-    * Activate mark. If you type ctrl+space twice in a row, it activates the mark, highlighting the region. If you already have a region and want to highlight it you can use ctrl+u ctrl+space ctrl+space, or ctrl+u ctrl+x ctrl+x. If you use the mouse to make a selection, it will set the mark and it will become the emacs region.
-    * The yank command will pull from the clipboard if it finds it is not the same as the current kill-ring entry. Also, anything you kill in emacs will be placed on the clipboard for other apps.
+    * Activate mark. If you type ctrl+space twice in a row, it activates the mark, highlighting the region. If you
+      already have a region and want to highlight it you can use ctrl+u ctrl+space ctrl+space, or ctrl+u ctrl+x ctrl+x.
+      If you use the mouse to make a selection, it will set the mark and it will become the emacs region.
+    * The yank command will pull from the clipboard if it finds it is not the same as the current kill-ring entry.
+      Also, anything you kill in emacs will be placed on the clipboard for other apps.
 
 ## Multiple Cursors
 
