@@ -62,6 +62,8 @@
     {"keys": ["super+shift+y"], "command": "jove_yank", "args": {"pop": -1}},
     {"keys": ["super+d"], "command": "jove_delete_word", "args": {"direction": 1}},
     {"keys": ["super+backspace"], "command": "jove_delete_word", "args": {"direction": -1}},
+    {"keys": ["alt+d"], "command": "jove_delete_word", "args": {"direction": 1}},
+    {"keys": ["alt+backspace"], "command": "jove_delete_word", "args": {"direction": -1}},
     {"keys": ["super+\\"], "command": "jove_delete_white_space"},
     {"keys": ["ctrl+d"], "command": "right_delete"},
 

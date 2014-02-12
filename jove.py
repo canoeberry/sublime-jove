@@ -19,6 +19,8 @@
 # make sexpressions work, including moving over balanced parens and quotes
 #
 # Pressing C-d or Delete when there's a selection doesn't delete the selected chars!
+#
+# Yanking text should turn of transient mark
 
 # Make use of regions intersection when you do searching. E.g., create a region where you want to perform the search and
 # then perform the search and THEN intersection the search regions with your regions. It should then be easy to find the
@@ -29,7 +31,7 @@ import sublime
 import sublime_plugin
 
 #
-# We store start about each view.
+# We store state about each view.
 #
 class ViewState():
     view_state_dict = dict()
