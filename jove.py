@@ -19,22 +19,30 @@
 # make sexpressions work, including moving over balanced parens and quotes
 #
 # Pressing C-d or Delete when there's a selection doesn't delete the selected chars!
-#
-# Yanking text should turn of transient mark
 
 # Make use of regions intersection when you do searching. E.g., create a region where you want to perform the search and
 # then perform the search and THEN intersection the search regions with your regions. It should then be easy to find the
 # next and previous matches within your scope.
 
+# Double clicking in a language should select the indentifier not the word. To fix this we need to use our own variables
+# for the forward word/sexpr implementation.
+
+# Fix indent and deindent not to require the selection. Instead, it should use the region.
+
 import functools as fu
 import sublime
 import sublime_plugin
+
+JOVE_STATUS = "jove"
 
 #
 # We store state about each view.
 #
 class ViewState():
+    # per view state
     view_state_dict = dict()
+
+    # currently active view
     current = None
 
     # initialized at the end of this file after all commands are defined
@@ -45,7 +53,7 @@ class ViewState():
 
     def __init__(self, view):
         self.view = view
-        self.transient_mark = False
+        self.active_mark = False
         self.reset()
 
     @classmethod
@@ -99,9 +107,12 @@ class ViewWatcher(sublime_plugin.EventListener):
     def on_close(self, view):
         ViewState.on_view_closed(view)
 
+    def on_modified(self, view):
+        CmdMixin(view).toggle_active_mark_mode(False)
+
 class CmdWatcher(sublime_plugin.EventListener):
     def on_anything(self, view):
-        view.set_status("jove", "")
+        view.set_status(JOVE_STATUS, "")
 
     #
     # Override some commands to execute them N times if the numberic argument is supplied.
@@ -109,6 +120,9 @@ class CmdWatcher(sublime_plugin.EventListener):
     def on_text_command(self, view, cmd, args):
         ViewState.ensure_view(view)
         self.on_anything(view)
+
+        if view.settings().get('is_widget'):
+            return
 
         if args is None:
             args = {}
@@ -120,17 +134,21 @@ class CmdWatcher(sublime_plugin.EventListener):
             vs.last_cmd = vs.this_cmd
             vs.this_cmd = cmd
 
+
+        #
+        #  Process events that create a selection. The hard part is making it work with the emacs region.
+        #
         if cmd == 'drag_select':
             # Set drag_count to 0 when drag_select command occurs. BUT, if the 'by' parameter is present, that means a
             # double or triple click occurred. When that happens we have a selection we want to start using, so we set
-            # drag_count to 2. 2 is the number of drag_counts we need in the normal course of events before we  turned
-            # on the transient mark mode.
+            # drag_count to 2. 2 is the number of drag_counts we need in the normal course of events before we turn
+            # on the active mark mode.
             vs.drag_count = 2 if 'by' in args else 0
-        elif vs.last_cmd == 'drag_select' and vs.transient_mark:
-            # if we just finished a mouse drag, make sure transient mark mode is off
-            CmdMixin(view).toggle_transient_mark_mode(False)
+        elif vs.last_cmd == 'drag_select' and vs.active_mark:
+            # if we just finished a mouse drag, make sure active mark mode is off
+            CmdMixin(view).toggle_active_mark_mode(False)
 
-        if cmd in ('move', 'move_to') and vs.transient_mark and not args.get('extend', False):
+        if cmd in ('move', 'move_to') and vs.active_mark and not args.get('extend', False):
             args['extend'] = True
             return (cmd, args)
 
@@ -151,6 +169,9 @@ class CmdWatcher(sublime_plugin.EventListener):
             args['amount'] *= vs.get_count()
             return (cmd, args)
 
+    #
+    # Post command processing: deal with active mark and resetting the numeric argument.
+    #
     def on_post_text_command(self, view, cmd, args):
         ViewState.current.last_cmd = cmd
         if not cmd in ('jove_universal_argument',):
@@ -158,11 +179,14 @@ class CmdWatcher(sublime_plugin.EventListener):
             ViewState.current.argument_supplied = False
         self.update_status(view)
 
-        if ViewState.current.transient_mark:
+        if ViewState.current.active_mark:
             cm = CmdMixin(view)
             cm.set_selection(cm.get_mark(), cm.get_point())
             pass
 
+    #
+    # Process the selection if it was created from a drag_select (mouse dragging) command.
+    #
     def on_selection_modified(self, view):
         vs = ViewState.current
         selection = view.sel()
@@ -170,21 +194,27 @@ class CmdWatcher(sublime_plugin.EventListener):
         if len(selection) == 1 and vs.this_cmd == 'drag_select':
             cm = CmdMixin(view);
             if vs.drag_count == 2:
-                # second event - enable transient mark
+                # second event - enable active mark
                 region = view.sel()[0]
                 mark = region.a
                 cm.set_mark(mark, and_selection=False)
-                cm.toggle_transient_mark_mode(True)
+                cm.toggle_active_mark_mode(True)
             elif vs.drag_count == 0:
-                cm.toggle_transient_mark_mode(False)
+                cm.toggle_active_mark_mode(False)
         vs.drag_count += 1
 
 
+    #
+    # At a minimum this is called when bytes are inserted into the buffer.
+    #
     def on_modified(self, view):
         ViewState.current.last_cmd = None
         self.update_status(view)
         self.on_anything(view)
 
+    #
+    # REMIND: Not really used anymore.
+    #
     def update_status(self, view):
         if ViewState.current.argument_supplied:
             s = "-" if ViewState.current.argument_negative else ""
@@ -204,7 +234,7 @@ class KillRing:
     #
     # Add some text to the kill ring. 'forward' indicates whether the editing command that produced this data was in the
     # forward or reverse direction. It only matters if 'join' is true, because it tells us how to add this data to the
-    # most recent kill ring entry.
+    # most recent kill ring entry rather than creating a new entry.
     #
     def add(self, text, forward, join):
         if len(text) == 0:
@@ -253,7 +283,7 @@ class KillRing:
         return val
 
 #
-# A base class which provides a bunch of useful functionality on a view, which is stored as an instance
+# A mixin class which provides a bunch of useful functionality on a view, which is stored as an instance
 # variable. sublime_plugin.TextCommand has its own view instance variable which this class makes use of when
 # mixed in with TextCommand.
 #
@@ -287,7 +317,7 @@ class CmdMixin:
     # Sets the status text on the bottom of the window.
     #
     def set_status(self, msg):
-        self.view.set_status("jove", msg)
+        self.view.set_status(JOVE_STATUS, msg)
 
     #
     # Returns point. Point is where the cursor is in the possibly extended region. If there are multiple cursors it
@@ -304,6 +334,7 @@ class CmdMixin:
     def get_jove_region(self):
         selection = self.view.sel()
         if len(selection) != 1:
+            # Oops - this error message does not belong here!
             self.set_status("Cannot kill region with multiple cursors")
             return
         selection = selection[0]
@@ -326,14 +357,19 @@ class CmdMixin:
         if update_status:
             self.set_status("Mark Saved")
 
-    def toggle_transient_mark_mode(self, value=None):
-        # enabling transient mark means highlight the current region
-        ViewState.current.transient_mark = value if value is not None else (not ViewState.current.transient_mark)
+    #
+    # Enabling active mark means highlight the current emacs region.
+    #
+    def toggle_active_mark_mode(self, value=None):
+        if value is not None and ViewState.current.active_mark == value:
+            return
+
+        ViewState.current.active_mark = value if value is not None else (not ViewState.current.active_mark)
         point = self.get_point()
-        if ViewState.current.transient_mark:
+        if ViewState.current.active_mark:
             mark = self.get_mark()
             self.set_selection(mark, point)
-            ViewState.current.transient_mark = True
+            ViewState.current.active_mark = True
         else:
             self.set_selection(point, point)
 
@@ -341,7 +377,7 @@ class CmdMixin:
         view = self.view
         mark = self.get_mark()
         if mark is not None:
-            if ViewState.current.transient_mark:
+            if ViewState.current.active_mark:
                 region = view.sel()[0]
                 self.set_selection(region.b, region.a)
                 self.ensure_visible(region.a)
@@ -454,9 +490,9 @@ class JoveMoveWordCommand(JoveTextCommand):
         settings = view.settings()
         separators = None
         if is_sexpr:
-            separators = settings.get("sexpr_separators")
+            separators = settings.get("jove_sexpr_separators")
         if separators is None:
-            separators = settings.get("word_separators")
+            separators = settings.get("jove_word_separators")
 
         # determine the direction
         count = self.get_count() * direction
@@ -587,16 +623,16 @@ class JoveSetMarkCommand(JoveTextCommand):
     def run(self, edit):
         if ViewState.current.this_cmd == ViewState.current.last_cmd or ViewState.current.argument_supplied:
             # at least two set mark commands in a row: turn ON the highlight
-            self.toggle_transient_mark_mode()
+            self.toggle_active_mark_mode()
         else:
             # set the mark
-            ViewState.current.transient_mark = False
+            ViewState.current.active_mark = False
             self.set_mark()
 
 class JoveSwapPointAndMarkCommand(JoveTextCommand):
     def run(self, edit):
         if ViewState.current.argument_supplied:
-            self.toggle_transient_mark_mode()
+            self.toggle_active_mark_mode()
         else:
             self.swap_point_and_mark()
 
@@ -627,9 +663,9 @@ class JoveKillRegionCommand(JoveTextCommand):
             self.kill_ring.add(view.substr(region), True, False)
             if not is_copy:
                 view.erase(edit, region)
-                self.toggle_transient_mark_mode(False)
             else:
-                self.set_status("Saved %d bytes" % (bytes,))
+                self.set_status("Copied %d bytes" % (bytes,))
+            self.toggle_active_mark_mode(False)
 
 class JoveTravelToPaneCommand(sublime_plugin.WindowCommand):
     def run(self, direction):
@@ -739,8 +775,8 @@ class JoveQuitCommand(JoveTextCommand):
         if s:
             pos = s.begin() + s.size() / 2;
             self.set_selection(pos, pos)
-        if ViewState.current.transient_mark:
-            self.toggle_transient_mark_mode()
+        if ViewState.current.active_mark:
+            self.toggle_active_mark_mode()
 
 class JoveConvertPlistToJsonCommand(JoveTextCommand):
     JSON_SYNTAX = "Packages/Javascript/JSON.tmLanguage"

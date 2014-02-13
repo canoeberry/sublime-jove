@@ -18,8 +18,6 @@
     {"keys": ["super+shift+,"], "command": "jove_move_to", "args": {"to": "bof"}},
     {"keys": ["super+."], "command": "jove_move_to", "args": {"to": "eow"}},
     {"keys": ["super+,"], "command": "jove_move_to", "args": {"to": "bow"}},
-    {"keys": ["super+g"], "command": "jove_goto_line"},
-    {"keys": ["alt+g"], "command": "find_next"},
     {"keys": ["super+e"], "command": "find_under_expand"},
     {"keys": ["ctrl+a"], "command": "move_to", "args": {"to": "hardbol", "extend": false }},
     {"keys": ["ctrl+e"], "command": "move_to", "args": {"to": "hardeol", "extend": false }},
@@ -29,6 +27,9 @@
 
     {"keys": ["super+n"], "command": "next_result"},
     {"keys": ["super+p"], "command": "prev_result"},
+
+    {"keys": ["ctrl+x", "g"], "command": "jove_goto_line"},
+    {"keys": ["ctrl+x", "l"], "command": "jove_goto_line"},
 
     //
     // incremental search

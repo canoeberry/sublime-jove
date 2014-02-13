@@ -41,9 +41,9 @@ Here are the main set of commands I have implemented or adjusted to conform to p
      * Various commands set the mark, such as ``C-y``, ``M-y`` as they do (and must) in emacs. ``M-<`` and ``M->`` also set the mark as do ``M-,`` and ``M-.``.
      * If you type ``C-space`` twice in a row, it will activate the mark, which means "highlight it as a selection". It stays highlighted until you type ``C-g`` or execute certain commands.
      * If you supply a numeric argument, e.g., ``C-u C-x C-x`` or ``C-u C-space``, it will activate the mark without moving the cursor.
-   * If you use the mouse to make a selection, it will set the mark and it will become the emacs region as well.
+     * If you use the mouse to make a selection, it will set the mark and it will become the emacs region as well.
    * ``C-o``: Open line.
-   * ``M-g``: Goto line via numeric argument, e.g., ``M-4 M-3 M-5 Meta-g`` goes to line 435. (Meta-g is not a great choice in Macs.)
+   * ``M-g``: Goto line via numeric argument, e.g., ``M-4 M-3 M-5 Meta-g`` goes to line 435. (Meta-g is not a great choice on Mac OS.)
    * ``C-l``: Center current line in view. With numeric argument, put the current line at the Nth line on the screen.
    * ``M-backslash``: Delete white space around point.
    * ``C-x 1``, ``C-x 2``, ``C-x-o``: Split and join windows. I assume the Origami package is installed, which is a package for splitting windows ala emacs. It's not right but an OK start.
