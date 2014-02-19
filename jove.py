@@ -1,8 +1,12 @@
+#
+# Figure out if you can make escaping from incremental search built-in by just specifying the names of commands you want
+# to escape with. The on_text_command listener can close up the isearch and run the command on a different view
+# (maybe?). Can you just rewrite the command and let "JoveIncSearchEscape" do the work?
+
 # IMPLEMENT
 #
 # - implement mark ring instead of just the mark
 # - implement a build command which lets me specify the make command I want to run
-# - search code needs to set the mark when done (how?)
 # - implement forward/backward "defun" via scope selectors
 # - implement forward/backward class definition via scope selectors
 # - delete blank lines would be nice
@@ -16,24 +20,22 @@
 # fix tab so that if you're in the whitespace, it moves to first non-blank
 #
 # fix comments so you can comment in the right column if no region is selected
+
 # make sexpressions work, including moving over balanced parens and quotes
 #
-# Pressing C-d or Delete when there's a selection doesn't delete the selected chars!
-
-# Make use of regions intersection when you do searching. E.g., create a region where you want to perform the search and
-# then perform the search and THEN intersection the search regions with your regions. It should then be easy to find the
-# next and previous matches within your scope.
-
-# Double clicking in a language should select the indentifier not the word. To fix this we need to use our own variables
-# for the forward word/sexpr implementation.
 
 # Fix indent and deindent not to require the selection. Instead, it should use the region.
 
 import functools as fu
 import sublime
 import sublime_plugin
+from copy import copy
+import re, sys
 
 JOVE_STATUS = "jove"
+
+ISEARCH_ESCAPE_CMDS = ('move_to', 'jove_center_view', 'move', 'jove_universal_argument',
+                       'jove_move_word', 'jove_move_to')
 
 #
 # We store state about each view.
@@ -45,8 +47,14 @@ class ViewState():
     # currently active view
     current = None
 
+    # currently incremental search instance
+    isearch_info = None
+
     # initialized at the end of this file after all commands are defined
     kill_cmds = set()
+
+    # ensure_visible commands
+    ensure_visible_cmds = set(['move', 'move_to'])
 
     # repeatable commands
     repeatable_cmds = set(['move', 'left_delete', 'right_delete'])
@@ -110,43 +118,60 @@ class ViewWatcher(sublime_plugin.EventListener):
     def on_modified(self, view):
         CmdMixin(view).toggle_active_mark_mode(False)
 
+    def on_deactivated(self, view):
+        info = ViewState.isearch_info
+        if info and info.input_view == view:
+            # deactivate immediately or else overlays will malfunction (we'll eat their keys)
+            # we cannot dismiss the input panel because an overlay (if present) will lose focus
+            info.deactivate()
+
+    def on_activated_async(self, view):
+        info = ViewState.isearch_info
+        if info and not view.settings().get("is_widget"):
+            # now we can dismiss the input panel
+            info.done()
+
+    def on_query_context(self, view, key, operator, operand, match_all):
+        if key == "i_search_active":
+            return ViewState.isearch_info and ViewState.isearch_info.is_active
+
 class CmdWatcher(sublime_plugin.EventListener):
     def on_anything(self, view):
-        view.set_status(JOVE_STATUS, "")
+        view.erase_status(JOVE_STATUS)
 
     #
     # Override some commands to execute them N times if the numberic argument is supplied.
     #
     def on_text_command(self, view, cmd, args):
+        if view.settings().get('is_widget') and ViewState.isearch_info:
+            if cmd in ISEARCH_ESCAPE_CMDS:
+                return ('jove_inc_search_escape', {'next_cmd': cmd, 'next_args': args})
+            return
+
         ViewState.ensure_view(view)
         self.on_anything(view)
-
-        if view.settings().get('is_widget'):
-            return
 
         if args is None:
             args = {}
 
         vs = ViewState.current
 
-        # first keep track of this_cmd and last_cmd
-        if cmd != 'jove_universal_argument':
-            vs.last_cmd = vs.this_cmd
+        # first keep track of this_cmd and last_cmd (if command starts with "jove_" it's handled elsewhere)
+        if not cmd.startswith("jove_"):
             vs.this_cmd = cmd
-
 
         #
         #  Process events that create a selection. The hard part is making it work with the emacs region.
         #
         if cmd == 'drag_select':
+            if ViewState.isearch_info:
+                ViewState.isearch_info.cancel()
+
             # Set drag_count to 0 when drag_select command occurs. BUT, if the 'by' parameter is present, that means a
             # double or triple click occurred. When that happens we have a selection we want to start using, so we set
             # drag_count to 2. 2 is the number of drag_counts we need in the normal course of events before we turn
             # on the active mark mode.
             vs.drag_count = 2 if 'by' in args else 0
-        elif vs.last_cmd == 'drag_select' and vs.active_mark:
-            # if we just finished a mouse drag, make sure active mark mode is off
-            CmdMixin(view).toggle_active_mark_mode(False)
 
         if cmd in ('move', 'move_to') and vs.active_mark and not args.get('extend', False):
             args['extend'] = True
@@ -173,16 +198,27 @@ class CmdWatcher(sublime_plugin.EventListener):
     # Post command processing: deal with active mark and resetting the numeric argument.
     #
     def on_post_text_command(self, view, cmd, args):
-        ViewState.current.last_cmd = cmd
-        if not cmd in ('jove_universal_argument',):
-            ViewState.current.argument_value = 0
-            ViewState.current.argument_supplied = False
+        ViewState.ensure_view(view)
+        vs = ViewState.current
+        if vs.active_mark and vs.this_cmd != 'drag_select' and vs.last_cmd == 'drag_select':
+            # if we just finished a mouse drag, make sure active mark mode is off
+            CmdMixin(view).toggle_active_mark_mode(False)
+
+        # reset numeric argument (if command starts with "jove_" this is handled elsewhere)
+        if not cmd.startswith("jove_"):
+            vs.argument_value = 0
+            vs.argument_supplied = False
+            vs.last_cmd = cmd
+
         self.update_status(view)
 
-        if ViewState.current.active_mark:
-            cm = CmdMixin(view)
+        cm = CmdMixin(view)
+
+        if vs.active_mark:
             cm.set_selection(cm.get_mark(), cm.get_point())
-            pass
+
+        if cmd in ViewState.ensure_visible_cmds and cm.just_one_point():
+            cm.ensure_visible(cm.get_point())
 
     #
     # Process the selection if it was created from a drag_select (mouse dragging) command.
@@ -208,7 +244,7 @@ class CmdWatcher(sublime_plugin.EventListener):
     # At a minimum this is called when bytes are inserted into the buffer.
     #
     def on_modified(self, view):
-        ViewState.current.last_cmd = None
+        ViewState.current.this_cmd = None
         self.update_status(view)
         self.on_anything(view)
 
@@ -325,12 +361,16 @@ class CmdMixin:
     #
     def get_point(self):
         sel = self.view.sel()
-        return sel[0].b
+        if len(sel) > 0:
+            return sel[0].b
+        return -1
+
     def get_mark(self):
         mark = self.view.get_regions("jove_mark")
         if mark:
             mark = mark[0]
             return mark.a
+
     def get_jove_region(self):
         selection = self.view.sel()
         if len(selection) != 1:
@@ -348,7 +388,7 @@ class CmdMixin:
     def set_mark(self, pos=None, update_status=True, and_selection=True):
         view = self.view
 
-        if not pos:
+        if pos is None:
             pos = self.get_point()
         mark = sublime.Region(pos, pos)
         view.add_regions("jove_mark", [mark], "mark", "dot", sublime.HIDDEN | sublime.PERSISTENT)
@@ -409,6 +449,9 @@ class CmdMixin:
     def has_prefix_arg(self):
         return ViewState.current.argument_supplied
 
+    def just_one_point(self):
+        return len(self.view.sel()) == 1
+
     def get_count(self, peek=False):
         return ViewState.current.get_count(peek)
 
@@ -450,9 +493,12 @@ class CmdMixin:
     def skip_chars(self, regex, dir):
         pass
 
-    def ensure_visible(self, point):
+    def is_visible(self, pos):
         visible = self.view.visible_region()
-        if not visible.contains(point):
+        return visible.contains(pos)
+
+    def ensure_visible(self, point, force=False):
+        if force or not self.is_visible(point):
             self.view.show_at_center(point)
 
     def is_word_char(self, pos, forward, separators):
@@ -461,7 +507,7 @@ class CmdMixin:
                 return False
             pos -= 1
         char = self.view.substr(pos)
-        return separators.find(char) < 0
+        return not (char in " \t\r\n" or char in separators)
 
 #
 # here we put a bunch of useful helpers for moving around and manipulating buffers
@@ -469,22 +515,46 @@ class CmdMixin:
 class JoveTextCommand(CmdMixin, sublime_plugin.TextCommand):
     kill_ring = KillRing()                        # class variable
     is_kill_cmd = False
+    is_ensure_visible_cmd = False
+    unregistered = False
+
+    def run(self, edit, **kwargs):
+        ViewState.ensure_view(self.view)
+
+        vs = ViewState.current
+
+        # first keep track of this_cmd and last_cmd
+        cmd = self.jove_cmd_name
+        if cmd != 'jove_universal_argument' or self.unregistered:
+            vs.this_cmd = cmd
+
+        self.run_cmd(edit, **kwargs)
+
+        if cmd != 'jove_universal_argument' or self.unregistered:
+            vs.last_cmd = cmd
+            vs.argument_value = 0
+            vs.argument_supplied = False
 
 class JoveDoTimesCommand(JoveTextCommand):
-    def run(self, edit, cmd, _times, **args):
+    def run_cmd(self, edit, cmd, _times, **args):
         view = self.view
+        visible = view.visible_region()
         for i in range(_times):
             view.run_command(cmd, args)
+        point = self.get_point()
+        if not visible.contains(point):
+            self.ensure_visible(point, True)
 
 class JoveShowScopeCommand(JoveTextCommand):
-    def run(self, edit, direction=1):
+    def run_cmd(self, edit, direction=1):
         name = self.view.scope_name(self.get_point())
         region = self.view.extract_scope(self.get_point())
-        print("Name", name)
-        print("Extent", region)
+        self.view.set_status(JOVE_STATUS, "%d bytes: %s" % (region.size(), name))
 
 class JoveMoveWordCommand(JoveTextCommand):
-    def run(self, edit, direction=1, is_sexpr=False):
+    is_ensure_visible_cmd = True
+
+    def run_cmd(self, edit, direction=1, is_sexpr=False):
         view = self.view
 
         settings = view.settings()
@@ -514,23 +584,23 @@ class JoveMoveWordCommand(JoveTextCommand):
 
         for c in range(count):
             self.for_each_cursor(move_word0, first=(c == 0))
-        self.ensure_visible(self.get_point())
 
 class JoveGotoLineCommand(JoveTextCommand):
-    def run(self, edit):
+    def run_cmd(self, edit):
         if self.has_prefix_arg():
             self.goto_line(self.get_count())
         else:
             self.run_window_command("show_overlay", {"overlay": "goto", "text": ":"})
 
 class JoveMoveSexprCommand(JoveMoveWordCommand):
-    def run(self, edit, direction=1):
+    def run_cmd(self, edit, direction=1):
         super(JoveMoveSexprCommand, self).run(edit, direction, True)
 
 class JoveDeleteWordCommand(JoveTextCommand):
+    is_ensure_visible_cmd = True
     is_kill_cmd = True
 
-    def run(self, edit, direction=1):
+    def run_cmd(self, edit, direction=1):
         view = self.view
         selection = view.sel()
         count = self.get_count(True) * direction
@@ -561,7 +631,7 @@ class JoveDeleteWordCommand(JoveTextCommand):
 class JoveDeleteWhiteSpaceCommand(JoveTextCommand):
     """Deletes white space around point like in emacs."""
 
-    def run(self, edit):
+    def run_cmd(self, edit):
         self.for_each_cursor(self.delete_white_space, edit=edit)
 
     def delete_white_space(self, cursor, edit, **kwargs):
@@ -579,25 +649,35 @@ class JoveDeleteWhiteSpaceCommand(JoveTextCommand):
         view.erase(edit, sublime.Region(line.begin() + start, line.begin() + end))
         return None
 
+# class JoveIndentRegion(JoveTextCommand):
+#     def run_cmd(self, edit, direction):
+#         view = self.view
+#         if direction < 0:
+#             # deindenting - calculate the minimum indent across all the lines
+#             for region in self.for_each_line():
+
+#         if view.get_mark() is not None:
+#             view.toggle_active_mark_mode(True)
+#             view.run_command("")
 
 class JoveUniversalArgumentCommand(JoveTextCommand):
-    def run(self, edit, value):
-        if not ViewState.current.argument_supplied:
-            ViewState.current.argument_supplied = True
+    def run_cmd(self, edit, value):
+        vs = ViewState.current
+        if not vs.argument_supplied:
+            vs.argument_supplied = True
             if value == 'by_four':
-                ViewState.current.argument_value = 4
+                vs.argument_value = 4
             elif value == 'negative':
-                ViewState.current.argument_negative = True
+                vs.argument_negative = True
             else:
-                ViewState.current.argument_value = value
+                vs.argument_value = value
         elif value == 'by_four':
-            ViewState.current.argument_value *= 4
+            vs.argument_value *= 4
         elif isinstance(value, int):
-            ViewState.current.argument_value *= 10
-            ViewState.current.argument_value += value
+            vs.argument_value *= 10
+            vs.argument_value += value
         elif value == 'negative':
-            ViewState.current.argument_value = -ViewState.current.argument_value
-
+            vs.argument_value = -vs.argument_value
 
 class JoveCenterViewCommand(JoveTextCommand):
     '''
@@ -606,7 +686,7 @@ class JoveCenterViewCommand(JoveTextCommand):
     the top of the screen.
     '''
 
-    def run(self, edit):
+    def run_cmd(self, edit):
         view = self.view
         point = self.get_point()
         if self.has_prefix_arg():
@@ -614,13 +694,12 @@ class JoveCenterViewCommand(JoveTextCommand):
             line_height = view.line_height()
             ignore, point_offy = view.text_to_layout(point)
             offx, ignore = view.viewport_position()
-            print("offx", offx, "point_offy", point_offy, "lines", lines)
             view.set_viewport_position((offx, point_offy - line_height * lines))
         else:
             view.show_at_center(point)
 
 class JoveSetMarkCommand(JoveTextCommand):
-    def run(self, edit):
+    def run_cmd(self, edit):
         if ViewState.current.this_cmd == ViewState.current.last_cmd or ViewState.current.argument_supplied:
             # at least two set mark commands in a row: turn ON the highlight
             self.toggle_active_mark_mode()
@@ -630,14 +709,15 @@ class JoveSetMarkCommand(JoveTextCommand):
             self.set_mark()
 
 class JoveSwapPointAndMarkCommand(JoveTextCommand):
-    def run(self, edit):
+    def run_cmd(self, edit):
         if ViewState.current.argument_supplied:
             self.toggle_active_mark_mode()
         else:
             self.swap_point_and_mark()
 
 class JoveMoveToCommand(JoveTextCommand):
-    def run(self, edit, to):
+    is_ensure_visible_cmd = True
+    def run_cmd(self, edit, to):
         if to == 'bof':
             self.goto_position(0, set_mark=True)
         elif to == 'eof':
@@ -647,7 +727,7 @@ class JoveMoveToCommand(JoveTextCommand):
             self.goto_position(visible.a if to == 'bow' else visible.b, True)
 
 class JoveOpenLineCommand(JoveTextCommand):
-    def run(self, edit):
+    def run_cmd(self, edit):
         view = self.view
         for point in view.sel():
             view.insert(edit, point.b, "\n")
@@ -655,7 +735,7 @@ class JoveOpenLineCommand(JoveTextCommand):
 
 class JoveKillRegionCommand(JoveTextCommand):
     is_kill_cmd = True
-    def run(self, edit, is_copy=False):
+    def run_cmd(self, edit, is_copy=False):
         view = self.view
         region = self.get_jove_region()
         if region:
@@ -697,13 +777,14 @@ class JoveDestroyPanesCommand(sublime_plugin.WindowCommand):
 
 class JoveKillLineCommand(JoveTextCommand):
     is_kill_cmd = True
-    def run(self, edit, is_copy=False):
+    def run_cmd(self, edit, is_copy=False):
         view = self.view
         start = self.get_point()
         text,index,region = self.get_line_info(start)
-        if ViewState.current.argument_supplied:
+        vs = ViewState.current
+        if vs.argument_supplied:
             # we don't support negative arguments for kill-line
-            count = abs(ViewState.current.get_count())
+            count = abs(vs.get_count())
 
             # go down N lines
             for i in range(abs(count)):
@@ -726,11 +807,11 @@ class JoveKillLineCommand(JoveTextCommand):
                 end += 1
 
         region = sublime.Region(start, end)
-        self.kill_ring.add(view.substr(region), True, ViewState.current.last_was_kill_cmd())
+        self.kill_ring.add(view.substr(region), True, vs.last_was_kill_cmd())
         view.erase(edit, region)
 
 class JoveYankCommand(JoveTextCommand):
-    def run(self, edit, pop=0):
+    def run_cmd(self, edit, pop=0):
         # for now only works with one cursor
         view = self.view
         selection = view.sel()
@@ -753,27 +834,360 @@ class JoveYankCommand(JoveTextCommand):
         else:
             self.set_status("Nothing to pop!")
 
-class JoveIncSearchCommand(JoveTextCommand):
-    def run(self, edit, forward=True):
-        self.set_status("foobar")
-        self.run_window_command("show_panel", {"panel": "incremental_find", "reverse": not forward})
+#####################################################
+#            Better incremental search              #
+#####################################################
+class ISearchInfo():
+    last_search = None
 
-class JoveIncSearchAddText(JoveTextCommand):
-    def run(self, edit):
-        print("Buffer size", self.view.size())
+    class StackItem():
+        def __init__(self, search, regions, selected, current_index, forward, wrapped):
+            self.prev = None
+            self.search = search
+            self.regions = regions
+            self.selected = selected
+            self.current_index = current_index
+            self.forward = forward
+            self.try_wrapped = False
+            self.wrapped = wrapped
+            if current_index >= 0 and regions:
+                # add the new one to selected
+                selected.append(regions[current_index])
+
+        def get_point(self):
+            if self.current_index >= 0:
+                r = self.regions[self.current_index]
+                return r.begin() if self.forward else r.end()
+            return None
+
+        #
+        # Clone is called when we want to make progress with the same search string as before.
+        #
+        def step(self, forward, keep):
+            index = self.current_index
+            matches = len(self.regions)
+            if (self.regions and (index < 0 or (index == 0 and not forward) or (index == matches - 1) and forward)):
+                # wrap around!
+                index = 0 if forward else matches - 1
+                if self.try_wrapped or not self.regions:
+                    wrapped = True
+                    self.try_wrapped = False
+                else:
+                    self.try_wrapped = True
+                    return None
+            elif (forward and index < matches - 1) or (not forward and index > 0):
+                index = index + 1 if forward else index - 1
+                wrapped = self.wrapped
+            else:
+                return None
+            selected = copy(self.selected)
+            if not keep and len(selected) > 0:
+                del(selected[-1])
+            return ISearchInfo.StackItem(self.search, self.regions, selected, index, forward, wrapped)
+
+
+    def __init__(self, view, forward):
+        self.view = view
+        self.current = ISearchInfo.StackItem("", [], [], -1, forward, False)
+        self.helper = CmdMixin(view)
+        self.window = view.window()
+        self.point = self.helper.get_point()
+        self.update()
+        self.input_view = None
+        self.in_changes = 0
+        self.forward = forward
+        self.is_active = True
+
+    def is_active(self):
+        return ViewState.isearch_info == self
+
+    def on_done(self, val):
+        # on_done: stop the search, keep the cursors intact
+        ViewState.isearch_info = None
+        if self.is_active:
+            self.finish(abort=False)
+
+    def on_cancel(self):
+        # on_cancel: stop the search, go back to start
+        ViewState.isearch_info = None
+        if self.is_active:
+            self.finish(abort=True)
+
+    def on_change(self, val):
+        if self.in_changes > 0:
+            # When we pop back to an old state, we have to replace the search string with what was in effect at that
+            # state. We do that by deleting all the text and inserting the value of the search string. This causes this
+            # on_change method to be called. We want to ignore it, which is what we're doing here.
+            self.in_changes -= 1
+            return
+
+        # determine if this is case sensitive search or not
+        flags = sublime.LITERAL
+        if not re.search(r'[A-Z]', val):
+            flags |= sublime.IGNORECASE
+
+        # find all instances if we have a search string
+        if len(val) > 0:
+            regions = self.view.find_all(val, flags)
+
+            # find the closest match to where we currently are
+            point = None
+            if self.current:
+                point = self.current.get_point()
+            if point is None:
+                point = self.point
+            index = self.find_closest(regions, point, self.forward)
+
+            # push this new state onto the stack
+            self.push(ISearchInfo.StackItem(val, regions, [], index, self.forward, self.current.wrapped))
+        else:
+            regions = None
+            index = -1
+        self.update()
+
+    #
+    # Implementation and internal API.
+    #
+
+    #
+    # Push a new state onto the stack.
+    #
+    def push(self, item):
+        item.prev = self.current
+        self.current = item
+
+    #
+    # Pop one state of the stack and restore everything to the state at that time.
+    #
+    def pop(self):
+        if self.current.prev:
+            self.current = self.current.prev
+            self.set_text(self.current.search)
+            self.forward = self.current.forward
+            self.update()
+        else:
+            print("NOthing to pop so not updating!")
+
+    def deactivate(self):
+        self.is_active = False
+        self.finish(abort=False)
+
+    def done(self):
+        # close the panel which should trigger an on_done
+        self.view.window().run_command("hide_panel")
+
+    #
+    # Set the text of the search to a particular value. If is_pop is True it means we're restoring to a previous state.
+    # Otherwise, we want to pretend as though this text were actually inserted.
+    #
+    def set_text(self, text, is_pop=True):
+        if is_pop:
+            self.in_changes += 1
+        self.input_view.run_command("select_all")
+        self.input_view.run_command("left_delete")
+        self.input_view.run_command("insert", {"characters": text})
+
+    def not_in_error(self):
+        si = self.current
+        #while si and not si.regions and si.search:
+        while si and not si.selected and si.search:
+            si = si.prev
+        return si
+
+    def finish(self, abort=False):
+        if self.current and self.current.search:
+            ISearchInfo.last_search = self.current.search
+        self.helper.set_status("")
+
+        point_set = False
+        if not abort:
+            selection = self.view.sel()
+            selection.clear()
+            current = self.not_in_error()
+            if current and current.selected:
+                selection.add_all(current.selected)
+                point_set = True
+
+        if not point_set:
+            # back whence we started
+            self.helper.set_selection(self.point)
+            self.helper.ensure_visible(self.point)
+        else:
+            self.helper.set_mark(self.point, and_selection=False)
+
+        # erase our regions
+        self.view.erase_regions("find")
+        self.view.erase_regions("selected")
+
+    def update(self):
+        si = self.not_in_error()
+        if si is None:
+            return
+
+        self.view.add_regions("find", si.regions, "text", "", sublime.DRAW_NO_FILL)
+        selected = si.selected or []
+        self.view.add_regions("selected", selected, "string", "", 0)
+        if selected:
+            self.helper.ensure_visible(selected[-1])
+
+        status = ""
+        if si != self.current:
+            status += "Failing "
+        if self.current.wrapped:
+            status += "Wrapped "
+        status += "I-Search " + ("Forward" if self.current.forward else "Reverse")
+        if si != self.current:
+            if len(self.current.regions) > 0:
+                status += " %s matches %s" % (len(self.current.regions), ("above" if self.forward else "below"))
+        else:
+            status += " %d matches, %d cursors" % (len(si.regions), len(si.selected))
+
+        self.helper.set_status(status)
+
+    #
+    # Try to make progress with the current search string. Even if we're currently failing (in our current direction) it
+    # doesn't mean there aren't matches for what we've typed so far.
+    #
+    def next(self, keep, forward=None):
+        if self.current.prev is None:
+            # do something special if we invoke "i-search" twice at the beginning
+            if ISearchInfo.last_search:
+                # insert the last search string
+                self.set_text(ISearchInfo.last_search, is_pop=False)
+        else:
+            if forward is None:
+                forward = self.current.forward
+            new = self.current.step(forward=forward, keep=keep)
+            if new:
+                self.push(new)
+                self.update()
+
+    def append_from_cursor(self):
+        # Figure out the contents to the right of the last region in the current selected state, and append characters
+        # from there.
+        si = self.current
+        if len(si.search) > 0 and not si.selected:
+            # search is failing - no point in adding from current cursor!
+            return
+
+        view = self.view
+        limit = view.size()
+        if si.selected:
+            point = si.selected[-1].end()
+        else:
+            point = self.point
+        if point >= limit:
+            return
+
+        # now push new states for each character we append to the search string
+        helper = self.helper
+        search = si.search
+        separators = view.settings().get("jove_word_separators")
+        case_sensitive = re.search(r'[A-Z]', search) is not None
+
+        # if the first character is a word character, we insert until we hit a non-word character.
+        if not helper.is_word_char(point, True, separators):
+            self.on_change(search + view.substr(point))
+        else:
+            while point < limit and helper.is_word_char(point, True, separators):
+                ch = view.substr(point)
+                if not case_sensitive:
+                    ch = ch.lower()
+                search += ch
+                self.on_change(search)
+                point += 1
+        self.set_text(self.current.search)
+
+    def cancel(self):
+        self.view.window().run_command("hide_panel")
+        self.finish(abort=True)
+
+    def quit(self):
+        close = False
+
+        if self.current.regions:
+            # if we have some matched regions, we're in "successful" state and close down the whole thing
+            close = True
+        else:
+            # here the search is currently failing, so we back up until the last non-failing state
+            while self.current.prev and not self.current.prev.regions:
+                self.current = self.current.prev
+            if self.current.prev is None:
+                close = True
+        if close:
+            self.cancel()
+        else:
+            self.pop()
+
+
+    def find_closest(self, regions, pos, forward):
+        #
+        # The regions are sorted so clearly this would benefit from a simple binary search ...
+        #
+        if len(regions) == 0:
+            return -1
+        # find the first region after the specified pos
+        found = False
+        if forward:
+            for index,r in enumerate(regions):
+                if r.end() >= pos:
+                    return index
+            return -1
+        else:
+            for index,r in enumerate(regions):
+                if r.begin() > pos:
+                    return index - 1
+            return len(regions) - 1
+
+class JoveIncSearchCommand(JoveTextCommand):
+    def run_cmd(self, edit, cmd=None, **kwargs):
+        info = ViewState.isearch_info
+        if info is None:
+            info = ViewState.isearch_info = ISearchInfo(self.view, kwargs['forward'])
+            window = self.view.window()
+            info.input_view = window.show_input_panel("I-Search:", "", info.on_done, info.on_change, info.on_cancel)
+        else:
+            if cmd == "next":
+                info.next(**kwargs)
+            elif cmd == "pop":
+                info.pop()
+            elif cmd == "append_from_cursor":
+                info.append_from_cursor()
+            else:
+                print("Not handling cmd", cmd, kwargs)
+
+class JoveIncSearchEscape(JoveTextCommand):
+    unregistered = True
+    def run_cmd(self, edit, next_cmd, next_args):
+        info = ViewState.isearch_info
+        info.done()
+        info.view.run_command(next_cmd, next_args)
 
 class JoveQuitCommand(JoveTextCommand):
-    def run(self, edit):
+    def run_cmd(self, edit):
         window = self.view.window()
-        for cmd in ['single_selection', 'clear_fields', 'hide_overlay', 'hide_auto_complete', 'hide_panel']:
+
+        if ViewState.isearch_info:
+            ViewState.isearch_info.quit()
+            return
+
+        for cmd in ['clear_fields', 'hide_overlay', 'hide_auto_complete', 'hide_panel']:
             window.run_command(cmd)
 
-        # If there is a selection, set point to the middle of it.
-        # REMIND: This would be better if it made sure the screen did not scroll when it was done.
+        # If there is a selection, set point to the end of it that is visible.
         s = self.view.sel()
         s = s and s[0]
         if s:
-            pos = s.begin() + s.size() / 2;
+            if self.is_visible(s.b):
+                pos = s.b
+            elif self.is_visible(s.a):
+                pos = s.a
+            else:
+                # set point to the beginning of the line in the middle of the window
+                visible = self.view.visible_region()
+                top_line = self.view.rowcol(visible.begin())[0]
+                bottom_line = self.view.rowcol(visible.end())[0]
+                pos = self.view.text_point((top_line + bottom_line) / 2, 0)
             self.set_selection(pos, pos)
         if ViewState.current.active_mark:
             self.toggle_active_mark_mode()
@@ -782,7 +1196,7 @@ class JoveConvertPlistToJsonCommand(JoveTextCommand):
     JSON_SYNTAX = "Packages/Javascript/JSON.tmLanguage"
     PLIST_SYNTAX = "Packages/XML/XML.tmLanguage"
 
-    def run(self, edit):
+    def run_cmd(self, edit):
         import json
         from plistlib import readPlistFromBytes, writePlistToBytes
 
@@ -795,7 +1209,7 @@ class JoveConvertJsonToPlistCommand(JoveTextCommand):
     JSON_SYNTAX = "Packages/Javascript/JSON.tmLanguage"
     PLIST_SYNTAX = "Packages/XML/XML.tmLanguage"
 
-    def run(self, edit):
+    def run_cmd(self, edit):
         import json
         from plistlib import readPlistFromBytes, writePlistToBytes
 
@@ -803,16 +1217,17 @@ class JoveConvertJsonToPlistCommand(JoveTextCommand):
         self.view.replace(edit, sublime.Region(0, self.view.size()), writePlistToBytes(data).decode("utf-8"))
         self.view.set_syntax_file(PLIST_SYNTAX)
 
-def JoveInit(names):
-    import re
+def InitModule(module_name):
     def get_cmd_name(cls):
         name = cls.__name__
         name = re.sub('(?!^)([A-Z]+)', r'_\1', name).lower()
         # strip "_command"
         return name[0:len(name) - 8]
-    for name in names:
+
+    module = sys.modules[module_name]
+    for name in dir(module):
         if name.startswith("Jove"):
-            cls = eval(name)
+            cls = getattr(module, name)
             try:
                 if not issubclass(cls, sublime_plugin.TextCommand):
                     continue
@@ -820,7 +1235,10 @@ def JoveInit(names):
                 continue
             # see what the deal is
             name = get_cmd_name(cls)
+            cls.jove_cmd_name = name
             if cls.is_kill_cmd:
                 ViewState.kill_cmds.add(name)
+            if cls.is_ensure_visible_cmd:
+                ViewState.ensure_visible_cmds.add(name)
 
-JoveInit(dir())
+InitModule(__name__)

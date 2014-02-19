@@ -32,17 +32,6 @@
     {"keys": ["ctrl+x", "l"], "command": "jove_goto_line"},
 
     //
-    // incremental search
-    //
-    {"keys": ["ctrl+s"], "command": "jove_inc_search", "args": {"forward": true}},
-    {"keys": ["ctrl+r"], "command": "jove_inc_search", "args": {"forward": false}},
-    {"keys": ["ctrl+w"], "command": "jove_inc_search_add_text",
-        "content": [
-            {"key": "panel", "operand": "incremental_find"},
-            {"key": "panel_has_focus"}
-        ]},
-
-    //
     // misc
     //
     {"keys": ["ctrl+o"], "command": "jove_open_line"},
@@ -97,6 +86,32 @@
     {"keys": ["super+]"], "command": "indent"},
     {"keys": ["super+["], "command": "unindent"},
     {"keys": ["super+j"], "command": "wrap_lines"},
+
+    //////////////////////////////
+    // Begin incremental search //
+    //////////////////////////////
+    {"keys": ["ctrl+s"], "command": "jove_inc_search", "args": {"forward": true}},
+    {"keys": ["ctrl+r"], "command": "jove_inc_search", "args": {"forward": false}},
+    {"keys": ["ctrl+w"], "command": "jove_inc_search", "args": {"cmd": "append_from_cursor"},
+        "context": [ {"key": "i_search_active"} ]
+    },
+    {"keys": ["super+d"], "command": "jove_inc_search", "args": {"cmd": "next", "keep": true},
+        "context": [ {"key": "i_search_active"} ]
+    },
+    {"keys": ["ctrl+s"], "command": "jove_inc_search", "args": {"cmd": "next", "keep": false, "forward": true},
+        "context": [ {"key": "i_search_active"} ]
+    },
+    {"keys": ["ctrl+r"], "command": "jove_inc_search", "args": {"cmd": "next", "keep": false, "forward": false},
+        "context": [ {"key": "i_search_active"} ]
+    },
+    {"keys": ["backspace"], "command": "jove_inc_search", "args": {"cmd": "pop"},
+        "context": [ {"key": "i_search_active"} ]
+    },
+
+    ////////////////////////////
+    // End incremental search //
+    ////////////////////////////
+
 
     {"keys": ["tab"], "command": "reindent",  "context": [
         {"key": "panel_has_focus",  "operand": false },

@@ -6,7 +6,7 @@ This is my attempt at bringing some of the basic emacs functionality to Sublime 
 they weren't quite right so I decided to try my own. Along the way I have learned an awful lot from reading the
 Sublemacspro plugin and in some places I have stolen mercilessly from their ideas.
 
-I have been using emacs for over 35 years and in my youth I implemented a popular version of emacs called JOVE -
+I have been using emacs for over 35 years and in my youth I implemented a version of emacs called JOVE -
 Jonathan's Own Version of Emacs. That is where this plugin got its name.
 
 ## Installation
@@ -22,7 +22,7 @@ that are for Python 3 and that might be a show-stopper for Sublime 2, at least f
 
 Here are the main set of commands I have implemented or adjusted to conform to proper emacs behavior.
 
-   * ``C-u``, ``M-0, ... M-9``: Emacs universal argument - you provide a prefix arguments to a command to run it that many times. E.g., ``M-2 M-3 C-F`` means go forward 23 characters.
+   * ``C-u``, ``M-0`` ... ``M-9``: Emacs universal argument - you provide a prefix arguments to a command to run it that many times. E.g., ``M-2`` M-3`` ``C-F`` means go forward 23 characters.
    * ``M-f`` and ``M-b``: Forward and backward words with the same exact behavior of emacs in terms of how you move.
    * ``C-M-f`` and ``C-M-b``: Forward and backward s-expressions. Initially it works on indentifiers but not quotes or parentheses yet.
    * Full emacs kill ring support:
@@ -47,6 +47,19 @@ Here are the main set of commands I have implemented or adjusted to conform to p
    * ``C-l``: Center current line in view. With numeric argument, put the current line at the Nth line on the screen.
    * ``M-backslash``: Delete white space around point.
    * ``C-x 1``, ``C-x 2``, ``C-x-o``: Split and join windows. I assume the Origami package is installed, which is a package for splitting windows ala emacs. It's not right but an OK start.
+   * ``C-s`` and ``C-r``: proper emacs-style incremental search
+     * As you type the search string grows and all the matches are highlighted.
+     * If you type ``C-s`` again you will move to the next match.
+     * If you type ``Backspace`` you are restored you to your previous search state. It will go back to a previous match or delete a character from your search string.
+     * If you type ``C-w`` while searching, the characters from your buffer are appended to your search string.
+     * If your search is currently failing, you can type ``C-g`` to go back to the last point your search was succeeding. If you type ``C-g`` when your search is succeeding, the search is aborted.
+     * Clicking the mouse will abort the search, as will opening an overlay.
+     * You can quit your search by typing many regular emacs commands, e.g., C-a, M-f, C-l, M-<, M->.
+     * When you complete a search your mark is set to where you started from.
+   * Sublime Incremental Search extensions:
+     * If you type ``C-d`` while search (CMD-d) your current match is added to the future cursor and you move to the next match.
+     * If you change your mind about a ``C-d``, you can press ``Backspace`` to undo it.
+     * This allows you to selectively pick which matches you want to add to your cursors, as well as allowing you to undo a mistake if you accidentally select one too many.
 
 ## Multiple Cursors
 
