@@ -33,6 +33,9 @@ JOVE_STATUS = "jove"
 ISEARCH_ESCAPE_CMDS = ('move_to', 'jove_center_view', 'move', 'jove_universal_argument',
                        'jove_move_word', 'jove_move_to')
 
+default_jove_sexpr_separators = "./\\()\"'-:,.;<>~!@#$%^&*|+=[]{}`~?";
+default_jove_word_separators = "./\\()\"'-_:,.;<>~!@#$%^&*|+=[]{}`~?";
+
 # kill ring shared across all buffers
 kill_ring = KillRing()
 
@@ -575,15 +578,11 @@ class JoveShowScopeCommand(JoveTextCommand):
 class JoveMoveWordCommand(JoveTextCommand):
     is_ensure_visible_cmd = True
 
-    def run_cmd(self, jove, direction=1, is_sexpr=False):
+    def run_cmd(self, jove, direction=1):
         view = self.view
 
         settings = view.settings()
-        separators = None
-        if is_sexpr:
-            separators = settings.get("jove_sexpr_separators")
-        if separators is None:
-            separators = settings.get("jove_word_separators")
+        separators = settings.get("jove_word_separators", default_jove_word_separators)
 
         # determine the direction
         count = jove.get_count() * direction
@@ -613,7 +612,7 @@ class JoveMoveSexprCommand(JoveTextCommand):
         view = self.view
 
         settings = view.settings()
-        separators = settings.get("jove_sexpr_separators")
+        separators = settings.get("jove_sexpr_separators", default_jove_sexpr_separators)
 
         # determine the direction
         count = jove.get_count() * direction
@@ -1199,7 +1198,7 @@ class ISearchInfo():
         # now push new states for each character we append to the search string
         helper = self.jove
         search = si.search
-        separators = view.settings().get("jove_word_separators")
+        separators = view.settings().get("jove_word_separators", default_jove_word_separators)
         case_sensitive = re.search(r'[A-Z]', search) is not None
 
         def append_one(ch):
