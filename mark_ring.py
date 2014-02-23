@@ -33,7 +33,7 @@ class MarkRing:
     def display(self):
         # display the mark's dot
         mark = self.get()
-        if mark:
+        if mark is not None:
             mark = sublime.Region(mark, mark)
             self.view.add_regions("jove_mark", [mark], "mark", "dot", sublime.HIDDEN)
 
@@ -54,8 +54,8 @@ class MarkRing:
     #
     def exchange(self, pos):
         val = self.get()
-        if val:
-            self.set(pos, self.index)
+        if val is not None:
+            self.set(pos, False)
             return val
 
     #

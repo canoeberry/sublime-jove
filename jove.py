@@ -458,12 +458,12 @@ class CmdHelper:
             point = view.text_point(line - 1, 0)
             self.goto_position(point, set_mark=True)
 
-    def goto_position(self, point, set_mark=False):
-        if set_mark and self.get_point() != point:
+    def goto_position(self, pos, set_mark=False):
+        if set_mark and self.get_point() != pos:
             self.set_mark()
         self.view.sel().clear()
-        self.view.sel().add(sublime.Region(point, point))
-        self.ensure_visible(point)
+        self.view.sel().add(sublime.Region(pos, pos))
+        self.ensure_visible(pos)
 
     def is_visible(self, pos):
         visible = self.view.visible_region()
