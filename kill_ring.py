@@ -11,9 +11,10 @@ class KillRing:
         self.index = 0
 
     #
-    # Add some text to the kill ring. 'forward' indicates whether the editing command that produced this data was in the
-    # forward or reverse direction. It only matters if 'join' is true, because it tells us how to add this data to the
-    # most recent kill ring entry rather than creating a new entry.
+    # Add some text to the kill ring. 'forward' indicates whether the editing command that produced
+    # this data was in the forward or reverse direction. It only matters if 'join' is true, because
+    # it tells us how to add this data to the most recent kill ring entry rather than creating a new
+    # entry.
     #
     def add(self, text, forward, join):
         if len(text) == 0:
@@ -36,8 +37,8 @@ class KillRing:
         sublime.set_clipboard(buffers[index])
 
     #
-    # Returns the current entry in the kill ring. If pop is non-zero, we move backwards or forwards once in the kill
-    # ring and return that data instead.
+    # Returns the current entry in the kill ring. If pop is non-zero, we move backwards or forwards
+    # once in the kill ring and return that data instead.
     #
     def get_current(self, pop):
         buffers = self.buffers
@@ -47,7 +48,8 @@ class KillRing:
             clipboard = sublime.get_clipboard()
             val = buffers[index]
             if val != clipboard and clipboard:
-                # we switched to another app and cut or copied something there, so add that to our kill ring
+                # we switched to another app and cut or copied something there, so add that to our
+                # kill ring
                 self.add(clipboard, True, False)
                 val = clipboard
         else:

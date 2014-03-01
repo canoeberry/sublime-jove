@@ -38,7 +38,8 @@ class MarkRing:
             self.view.add_regions("jove_mark", [mark], "mark", "dot", sublime.HIDDEN)
 
     #
-    # Set the mark to pos. If index is supplied we overwrite that mark, otherwise we push to the next location.
+    # Set the mark to pos. If index is supplied we overwrite that mark, otherwise we push to the
+    # next location.
     #
     def set(self, pos, same_index=False):
         if self.get() == pos:
@@ -59,8 +60,8 @@ class MarkRing:
             return val
 
     #
-    # Pops the current mark from the ring and returns it. The caller sets point to that value. The new mark is the
-    # previous mark on the ring.
+    # Pops the current mark from the ring and returns it. The caller sets point to that value. The
+    # new mark is the previous mark on the ring.
     #
     def pop(self):
         val = self.get()
@@ -68,9 +69,10 @@ class MarkRing:
         # find a non-None mark in the ring
         start = self.index
         while True:
-            self.index = (self.index + self.MARK_RING_SIZE - 1) % self.MARK_RING_SIZE
+            self.index -= 1
+            if self.index < 0:
+                self.index = self.MARK_RING_SIZE - 1
             if self.get() is not None or self.index == start:
                 break
         self.display()
         return val
-

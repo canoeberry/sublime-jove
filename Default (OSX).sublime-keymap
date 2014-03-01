@@ -7,12 +7,19 @@
     {"keys": ["ctrl+super+f"], "command": "jove_move_sexpr", "args": {"direction": 1}},
     {"keys": ["super+b"], "command": "jove_move_word", "args": {"direction": -1}},
     {"keys": ["ctrl+super+b"], "command": "jove_move_sexpr", "args": {"direction": -1}},
+    {"keys": ["super+c"], "command": "jove_case_word", "args": {"direction": 1, "mode": "title"}},
+    {"keys": ["super+u"], "command": "jove_case_word", "args": {"direction": 1, "mode": "upper"}},
+    {"keys": ["super+l"], "command": "jove_case_word", "args": {"direction": 1, "mode": "lower"}},
 
     // make sure alt commands use OUR version otherwise the kill ring will get very confusing
     {"keys": ["alt+f"], "command": "jove_move_word", "args": {"direction": 1}},
     {"keys": ["ctrl+alt+f"], "command": "jove_move_sexpr", "args": {"direction": 1}},
     {"keys": ["alt+b"], "command": "jove_move_word", "args": {"direction": -1}},
     {"keys": ["ctrl+alt+b"], "command": "jove_move_sexpr", "args": {"direction": -1}},
+    {"keys": ["alt+c"], "command": "jove_case_word", "args": {"direction": 1, "mode": "title"}},
+    {"keys": ["alt+u"], "command": "jove_case_word", "args": {"direction": 1, "mode": "upper"}},
+    {"keys": ["alt+l"], "command": "jove_case_word", "args": {"direction": 1, "mode": "lower"}},
+
 
     {"keys": ["super+shift+."], "command": "jove_move_to", "args": {"to": "eof"}},
     {"keys": ["super+shift+,"], "command": "jove_move_to", "args": {"to": "bof"}},
@@ -95,8 +102,8 @@
     //////////////////////////////
     // Begin incremental search //
     //////////////////////////////
-    {"keys": ["ctrl+s"], "command": "jove_inc_search", "args": {"forward": true, "regex": true}},
-    {"keys": ["ctrl+r"], "command": "jove_inc_search", "args": {"forward": false, "regex": true}},
+    {"keys": ["ctrl+s"], "command": "jove_inc_search", "args": {"forward": true, "regex": false}},
+    {"keys": ["ctrl+r"], "command": "jove_inc_search", "args": {"forward": false, "regex": false}},
     {"keys": ["ctrl+w"], "command": "jove_inc_search", "args": {"cmd": "append_from_cursor"},
         "context": [ {"key": "i_search_active"} ]
     },
@@ -112,16 +119,13 @@
     {"keys": ["backspace"], "command": "jove_inc_search", "args": {"cmd": "pop"},
         "context": [ {"key": "i_search_active"} ]
     },
-    {"keys": ["super+r"], "command": "jove_inc_search", "args": {"cmd": "toggle_regex"},
-        "context": [ {"key": "i_search_active"} ]
-    },
 
     ////////////////////////////
     // End incremental search //
     ////////////////////////////
 
 
-    {"keys": ["tab"], "command": "reindent",  "context": [
+    {"keys": ["tab"], "command": "jove_indent",  "context": [
         {"key": "panel_has_focus",  "operand": false },
         {"key": "auto_complete_visible", "operand": false },
         {"key": "has_next_field", "operand": false },
@@ -130,14 +134,21 @@
 
     {"keys": ["ctrl+g"], "command": "jove_quit"},
 
-    {"keys": ["ctrl+x", "2"], "command": "create_pane_with_file", "args": {"direction": "down"}},
-    {"keys": ["ctrl+x", "n"], "command": "jove_travel_to_pane", "args": {"direction": "down"}},
-    {"keys": ["ctrl+x", "p"], "command": "jove_travel_to_pane", "args": {"direction": "up"}},
-    {"keys": ["ctrl+x", "o"], "command": "jove_travel_to_pane", "args": {"direction": "up"}},
-    {"keys": ["ctrl+x", "d"], "command": "jove_destroy_panes", "args": {"pane": "self"}},
-    {"keys": ["ctrl+x", "1"], "command": "jove_destroy_panes", "args": {"pane": "others"}},
+    /////////////////////////////
+    // Begin emacs window cmds //
+    /////////////////////////////
 
-    {"keys": ["ctrl+x", "s"], "command": "jove_show_scope"},
+    {"keys": ["ctrl+x", "2"], "command": "jove_pane_cmd", "args": {"cmd": "split"}},
+    {"keys": ["ctrl+x", "g"], "command": "jove_pane_cmd", "args": {"cmd": "grow", "amount": 1}},
+    {"keys": ["ctrl+x", "s"], "command": "jove_pane_cmd", "args": {"cmd": "grow", "amount": -1}},
+    {"keys": ["ctrl+x", "d"], "command": "jove_pane_cmd", "args": {"cmd": "destroy", "pane": "self"}},
+    {"keys": ["ctrl+x", "1"], "command": "jove_pane_cmd", "args": {"cmd": "destroy", "pane": "others"}},
+    {"keys": ["ctrl+x", "n"], "command": "jove_pane_cmd", "args": {"cmd": "move", "direction": "next"}},
+    {"keys": ["ctrl+x", "p"], "command": "jove_pane_cmd", "args": {"cmd": "move", "direction": "prev"}},
+    {"keys": ["ctrl+x", "o"], "command": "jove_pane_cmd", "args": {"cmd": "move", "direction": "prev"}},
+    {"keys": ["super+shift+["], "command": "jove_pane_cmd", "args": {"cmd": "move", "direction": "left"}},
+    {"keys": ["super+shift+]"], "command": "jove_pane_cmd", "args": {"cmd": "move", "direction": "right"}},
+
+    {"keys": ["ctrl+x", "super+s"], "command": "jove_show_scope"},
     {"keys": ["shift+super+-"], "command": "decrease_font_size"},
-
 ]

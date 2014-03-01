@@ -1,4 +1,5 @@
 # IMPLEMENT
+# - C-x C-o
 #
 # - implement a build command which lets me specify the make command I want to run
 # - implement forward/backward "defun" via scope selectors
@@ -6,14 +7,13 @@
 # - delete blank lines would be nice
 # - quit command should erase the main selection as well
 # - make fill paragraph smart about bulleted (i.e., ones that start with "-" or "*")
+# - add support for "set mark automatically" commands
+#   - move_to brackets but not necessarily other move_to's
+#   - maybe get rid of your own move to eof and bof if you can get this working
+#   - goto symbol stuff will be harder...
+# - add an up-arrow (or meta-P meta-N) history mechanism for incremental search
 
 # FIX
-#
-# fix window commands - make your own split window stuff so you can implement next/prev properly
-# (the ordering is messed up - not sorted)
-#
-# Fix tab so that if you're in the whitespace, it moves to first non-blank. Also if nothing changes
-# have it indent one level.
 #
 # fix comments so you can comment in the right column if no region is selected
 #
@@ -31,13 +31,22 @@ from .mark_ring import MarkRing
 JOVE_STATUS = "jove"
 
 ISEARCH_ESCAPE_CMDS = ('move_to', 'jove_center_view', 'move', 'jove_universal_argument',
-                       'jove_move_word', 'jove_move_to')
+                       'jove_move_word', 'jove_move_to', 'scroll_lines')
 
 default_jove_sexpr_separators = "./\\()\"'-:,.;<>~!@#$%^&*|+=[]{}`~?";
 default_jove_word_separators = "./\\()\"'-_:,.;<>~!@#$%^&*|+=[]{}`~?";
 
 # kill ring shared across all buffers
 kill_ring = KillRing()
+
+# ensure_visible commands
+ensure_visible_cmds = set(['move', 'move_to'])
+
+# initialized at the end of this file after all commands are defined
+kill_cmds = set()
+
+# repeatable commands
+repeatable_cmds = set(['move', 'left_delete', 'right_delete'])
 
 #
 # We store state about each view.
@@ -49,17 +58,8 @@ class ViewState():
     # currently active view
     current = None
 
-    # currently incremental search instance
+    # current in-progress i-search instance
     isearch_info = None
-
-    # initialized at the end of this file after all commands are defined
-    kill_cmds = set()
-
-    # ensure_visible commands
-    ensure_visible_cmds = set(['move', 'move_to'])
-
-    # repeatable commands
-    repeatable_cmds = set(['move', 'left_delete', 'right_delete'])
 
     def __init__(self, view):
         self.view = view
@@ -102,7 +102,10 @@ class ViewState():
         if self.argument_supplied:
             count = self.argument_value
             if self.argument_negative:
-                count = -count
+                if count == 0:
+                    count = -1
+                else:
+                    count = -count
                 if not peek:
                     self.argument_negative = False
             if not peek:
@@ -112,9 +115,13 @@ class ViewState():
         return count
 
     def last_was_kill_cmd(self):
-        return self.last_cmd in self.kill_cmds
+        return self.last_cmd in kill_cmds
 
 class ViewWatcher(sublime_plugin.EventListener):
+    def __init__(self, *args, **kwargs):
+        super(ViewWatcher, self).__init__(*args, **kwargs)
+        self.pending_dedups = 0
+
     def on_close(self, view):
         ViewState.on_view_closed(view)
 
@@ -137,6 +144,16 @@ class ViewWatcher(sublime_plugin.EventListener):
     def on_query_context(self, view, key, operator, operand, match_all):
         if key == "i_search_active":
             return ViewState.isearch_info and ViewState.isearch_info.is_active
+
+    def on_post_save(self, view):
+        # Schedule a dedup, but do not do it NOW because it seems to cause a crash if, say, we're
+        # saving all the buffers right now. So we schedule it for the future.
+        self.pending_dedups += 1
+        def doit():
+            self.pending_dedups -= 1
+            if self.pending_dedups == 0:
+                dedup_views(sublime.active_window())
+        sublime.set_timeout(doit, 50)
 
 class CmdWatcher(sublime_plugin.EventListener):
     def on_anything(self, view):
@@ -184,7 +201,7 @@ class CmdWatcher(sublime_plugin.EventListener):
         if not vs.argument_supplied:
             return
 
-        if cmd in vs.repeatable_cmds:
+        if cmd in repeatable_cmds:
             count = vs.get_count()
             args.update({
                 'cmd': cmd,
@@ -214,9 +231,14 @@ class CmdWatcher(sublime_plugin.EventListener):
             vs.last_cmd = cmd
 
         if vs.active_mark:
-            cm.set_selection(cm.get_mark(), cm.get_point())
+            if len(view.sel()) > 1:
+                # allow the awesomeness of multiple cursors to be used: the selection will disappear
+                # after the next command
+                vs.active_mark = False
+            else:
+                cm.set_selection(cm.get_mark(), cm.get_point())
 
-        if cmd in ViewState.ensure_visible_cmds and cm.just_one_point():
+        if cmd in ensure_visible_cmds and cm.just_one_point():
             cm.ensure_visible(cm.get_point())
 
     #
@@ -273,6 +295,15 @@ class CmdHelper:
         if len(sel) > 0:
             return sel[0].b
         return -1
+
+    #
+    # This no-op ensures the next/prev line target column is reset to the new locations.
+    #
+    def reset_target_column(self):
+        selection = self.view.sel()
+        if len(selection) == 1 and selection[0].empty() and selection[0].b < self.view.size():
+            self.run_command("move", {"by": "characters", "forward": True})
+            self.run_command("move", {"by": "characters", "forward": False})
 
     #
     # Returns the mark position.
@@ -344,8 +375,10 @@ class CmdHelper:
     #
     # Returns True if the specified pos is within a line's indent.
     #
-    def within_indent(self, pos):
-        pass
+    def get_line_indent(self, pos):
+        data,col,region = self.get_line_info(pos)
+        m = re.match(r'[ \t]*', data)
+        return (len(m.group(0)), col)
 
     #
     # Sets the buffers mark to the specified pos (or the current position in the view).
@@ -531,6 +564,7 @@ class CmdHelper:
 # here we put a bunch of useful helpers for moving around and manipulating buffers
 #
 class JoveTextCommand(sublime_plugin.TextCommand):
+    should_reset_target_column = False
     is_kill_cmd = False
     is_ensure_visible_cmd = False
     unregistered = False
@@ -545,15 +579,19 @@ class JoveTextCommand(sublime_plugin.TextCommand):
         if vs.entered == 0 and (cmd != 'jove_universal_argument' or self.unregistered):
             vs.this_cmd = cmd
         vs.entered += 1
+        jove = CmdHelper(self.view, state=vs, edit=edit)
         try:
-            helper = CmdHelper(self.view, state=vs, edit=edit)
-            self.run_cmd(helper, **kwargs)
+            self.run_cmd(jove, **kwargs)
         finally:
             vs.entered -= 1
         if vs.entered == 0 and (cmd != 'jove_universal_argument' or self.unregistered):
             vs.last_cmd = vs.this_cmd
             vs.argument_value = 0
             vs.argument_supplied = False
+
+            # this no-op ensures the next/prev line target column is reset to the new locations
+            if self.should_reset_target_column:
+                jove.reset_target_column()
 
 
 class JoveDoTimesCommand(JoveTextCommand):
@@ -576,6 +614,7 @@ class JoveShowScopeCommand(JoveTextCommand):
         self.view.set_status(JOVE_STATUS, status)
 
 class JoveMoveWordCommand(JoveTextCommand):
+    should_reset_target_column = True
     is_ensure_visible_cmd = True
 
     def run_cmd(self, jove, direction=1):
@@ -605,8 +644,87 @@ class JoveMoveWordCommand(JoveTextCommand):
         for c in range(count):
             jove.for_each_cursor(move_word0, first=(c == 0))
 
+#
+# Advance to the beginning (or end if going backward) word unless already positioned at a word
+# character. This can be used to setup for commands like upper/lower/capitalize words. This ignores
+# the argument count.
+#
+class JoveToWordCommand(JoveTextCommand):
+    should_reset_target_column = True
+
+    def run_cmd(self, jove, direction=1):
+        view = self.view
+
+        settings = view.settings()
+        separators = settings.get("jove_word_separators", default_jove_word_separators)
+        forward = direction > 0
+
+        def to_word(cursor):
+            point = cursor.b
+            if forward:
+                if not jove.is_word_char(point, True, separators):
+                    point = view.find_by_class(point, True, sublime.CLASS_WORD_START, separators)
+            else:
+                if not jove.is_word_char(point, False, separators):
+                    point = view.find_by_class(point, False, sublime.CLASS_WORD_END, separators)
+            cursor.a = cursor.b = point
+            return cursor
+
+        jove.for_each_cursor(to_word)
+
+class JoveCaseWordCommand(JoveTextCommand):
+    should_reset_target_column = True
+
+    def run_cmd(self, jove, mode, direction=1):
+        count = jove.get_count() * direction
+        direction = -1 if count < 0 else 1
+        count = abs(count)
+        args = {"direction": direction}
+
+        def case_word(cursor):
+            if direction < 0:
+                orig_point = cursor.a
+                saved = jove.save_region("tmp")
+                for i in range(count):
+                    jove.run_command("jove_move_word", args)
+                args['direction'] = -args['direction']
+
+            for i in range(count):
+                # go to beginning of word (or stay where we are)
+                jove.run_command('jove_to_word', args)
+                cursor.a = jove.get_point()
+
+                # stretch the selection to the end of the word, making sure we do zip past our start
+                # if we were going backwards
+                jove.run_command('jove_move_word', args)
+                cursor.b = jove.get_point()
+                if direction < 0 and cursor.b > orig_point:
+                    cursor.b = orig_point
+
+                # now convert the text in the selection
+                old_text = text = jove.view.substr(cursor)
+                if mode == "title":
+                    text = text.title()
+                elif mode == 'lower':
+                    text = text.lower()
+                elif mode == 'upper':
+                    text= text.upper()
+                else:
+                    print("Unknown mode", mode)
+                if old_text != text:
+                    jove.view.erase(jove.edit, cursor)
+                    jove.view.insert(jove.edit, cursor.a, text)
+
+            if direction < 0:
+                cursor.a = cursor.b = orig_point
+            else:
+                cursor.a = cursor.b = jove.get_point()
+            return cursor
+        jove.for_each_cursor(case_word)
+
 class JoveMoveSexprCommand(JoveTextCommand):
     is_ensure_visible_cmd = True
+    should_reset_target_column = True
 
     def run_cmd(self, jove, direction=1):
         view = self.view
@@ -824,7 +942,7 @@ class JoveMoveToCommand(JoveTextCommand):
             jove.goto_position(self.view.size(), set_mark=True)
         elif to in ('eow', 'bow'):
             visible = self.view.visible_region()
-            jove.goto_position(visible.a if to == 'bow' else visible.b, True)
+            jove.goto_position(visible.a if to == 'bow' else visible.b)
 
 class JoveOpenLineCommand(JoveTextCommand):
     def run_cmd(self, jove):
@@ -870,14 +988,184 @@ class JoveDestroyPanesCommand(sublime_plugin.WindowCommand):
             window = sublime.active_window()
             active = window.active_group()
             cnt = window.num_groups()
-            while window.active_group() > 0 and --cnt >= 0:
+            while window.active_group() > 0 and cnt > 0:
+                cnt -= 1
                 window.run_command("destroy_pane", {"direction": "up"})
-            while window.num_groups() > 1 and --cnt >= 0:
+            while window.num_groups() > 1 and cnt > 0:
+                cnt -= 1
                 window.run_command("destroy_pane", {"direction": "down"})
+
+class JovePaneCmdCommand(JoveTextCommand):
+    def run_cmd(self, jove, cmd, **kwargs):
+        view = self.view
+        window = view.window()
+        if cmd == 'split':
+            self.split(window, jove, **kwargs)
+        elif cmd == 'grow':
+            self.grow(window, jove, **kwargs)
+        elif cmd == 'destroy':
+            self.destroy(window, jove, **kwargs)
+        elif cmd == 'move':
+            self.move(window, jove, **kwargs)
+        else:
+            print("Unknown command")
+
+    def grow(self, window, jove, amount):
+        def rows_to_sizes(rows):
+            sizes = []
+            for i in range(len(rows) - 1):
+                sizes.append(rows[i + 1] - rows[i])
+            return sizes
+
+        def sizes_to_rows(sizes):
+            rows = [0]
+            off = 0
+            for s in sizes:
+                off += s
+                rows.append(off)
+            return rows
+
+        if window.num_groups() == 1:
+            return
+        layout = window.layout()
+        sizes = rows_to_sizes(layout['rows'])
+        current = window.active_group()
+        view = jove.view
+
+        line_height = view.line_height()
+
+        # calulcate the percentage for a single line: view_percentage * line_height/view_height
+        one_line = sizes[current] * (line_height / view.viewport_extent()[1])
+        amnt = one_line * jove.get_count() * amount
+
+        other = current - 1 if current == window.num_groups() - 1 else current + 1
+        total = sizes[other] + sizes[current]
+        sizes[other] -= amnt
+        sizes[current] += amnt
+        if sizes[other] < .1:
+            sizes[other] = .1
+            sizes[current] = total - .1
+
+        layout['rows'] = sizes_to_rows(sizes)
+        window.set_layout(layout)
+        window.active_view_in_group(other).show(jove.get_point())
+
+    def split(self, window, jove):
+        # For reference: this is what a layout looks like
+        # {'cells': [[0, 0, 1, 1], [0, 1, 1, 2], [0, 2, 1, 3]], 'cols': [0.0, 1.0], 'rows': [0.0, 0.3097919170673077, 0.6548959585336538, 1.0]}
+        view = jove.view
+        layout = window.layout()
+        rows = layout['rows']
+
+        # this is the one we're splitting
+        current = window.active_group()
+        y0 = rows[current]
+        y1 = rows[current + 1]
+
+        # we're willing to split down to 4 lines in each window
+        if view.viewport_extent()[1] / 2 <= 4 * view.line_height():
+            return
+
+        rows.insert(current + 1, (y1 + y0) / 2)
+
+        # generate new cells
+        layout['cells'] = [[0, index, 1, index + 1] for index in range(len(rows) - 1)]
+        window.set_layout(layout)
+
+        # look for another view in the current group that is display this file
+        new_view = None
+        for v in window.views_in_group(current):
+            if v != view and v.buffer_id() == view.buffer_id():
+                new_view = v
+                break
+        if new_view is None:
+            # now clone the current view into the new pane without messing up the current view
+            window.run_command("clone_file")
+            new_view = window.active_view()
+
+        # move the new view into the new group
+        window.set_view_index(new_view, current + 1, 0)
+
+
+        # make sure the original view is the focus in the original pane
+        window.focus_view(view)
+
+        # switch to new pane
+        window.focus_group(current + 1)
+
+        # after a short delay make sure the two views are looking at the same area
+        def setup_views():
+            selection = new_view.sel()
+            selection.clear()
+            selection.add_all([r for r in view.sel()])
+            new_view.set_viewport_position(view.viewport_position(), False)
+
+            point = jove.get_point()
+            new_view.show(point)
+            view.show(point)
+
+        sublime.set_timeout(setup_views, 10)
+
+    #
+    # Destroy the specified pane=self|others.
+    #
+    def destroy(self, window, jove, pane):
+        if window.num_groups() == 1:
+            return
+        view = jove.view
+        layout = window.layout()
+        rows = layout['rows']
+        current = window.active_group()
+
+        # remember which views are where
+        views = [window.active_view_in_group(i) for i in range(window.num_groups())]
+
+        if pane == "self":
+            del(views[current])
+
+            # we give the space to the window above if possible
+            del(rows[max(1, current)])
+        else:
+            # delete all but the first and last elements
+            rows[1:-1] = []
+            views = [jove.view]
+
+        # generate new cells
+        layout['cells'] = [[0, index, 1, index + 1] for index in range(len(rows) - 1)]
+        window.set_layout(layout)
+        for i in range(window.num_groups()):
+            view = views[i]
+            window.focus_group(i)
+            window.focus_view(view)
+
+        window.focus_group(max(0, current - 1))
+        dedup_views(window)
+
+    def move(self, window, jove, direction):
+        if direction in ("prev", "next"):
+            direction = 1 if direction == "next" else -1
+            current = window.active_group()
+            current += direction
+            num_groups = window.num_groups()
+            if current < 0:
+                current = num_groups - 1
+            elif current >= num_groups:
+                current = 0
+            window.focus_group(current)
+        else:
+            group,index = window.get_view_index(jove.view)
+            views = window.views_in_group(group)
+            direction = 1 if direction == "right" else -1
+            index += direction
+            if index >= len(views):
+                index = 0
+            elif index < 0:
+                index = len(views) - 1
+            window.focus_view(views[index])
 
 class JoveKillLineCommand(JoveTextCommand):
     is_kill_cmd = True
-    def run_cmd(self, jove, is_copy=False):
+    def run_cmd(self, jove):
         view = self.view
         state = jove.state
         start = jove.get_point()
@@ -1202,6 +1490,8 @@ class ISearchInfo():
         case_sensitive = re.search(r'[A-Z]', search) is not None
 
         def append_one(ch):
+            if not case_sensitive:
+                ch = ch.lower()
             if self.regex and ch in "{}()[].*+":
                 return "\\" + ch
             return ch
@@ -1215,8 +1505,6 @@ class ISearchInfo():
             # now insert word characters
             while point < limit and helper.is_word_char(point, True, separators):
                 ch = view.substr(point)
-                if not case_sensitive:
-                    ch = ch.lower()
                 search += append_one(ch)
                 self.on_change(search)
                 point += 1
@@ -1273,6 +1561,7 @@ class JoveIncSearchCommand(JoveTextCommand):
                 regex = not regex
             info = ViewState.isearch_info = ISearchInfo(self.view, kwargs['forward'], regex)
             info.open()
+
         else:
             if cmd == "next":
                 info.next(**kwargs)
@@ -1283,12 +1572,45 @@ class JoveIncSearchCommand(JoveTextCommand):
             else:
                 print("Not handling cmd", cmd, kwargs)
 
+    def is_visible(self, **kwargs):
+        # REMIND: is it not possible to invoke isearch from the menu for some reason. I think the
+        # problem is that a focus thing is happening and we're dismissing ourselves as a result. So
+        # for now we hide it.
+        if ViewState.isearch_info:
+            return False
+        return False
+
+
 class JoveIncSearchEscape(JoveTextCommand):
     unregistered = True
     def run_cmd(self, jove, next_cmd, next_args):
         info = ViewState.isearch_info
         info.done()
         info.view.run_command(next_cmd, next_args)
+
+#
+# Indent for tab command. If the cursor is not within the existing indent, just call reindent. If
+# the cursor is within the indent, move to the start of the indent and call reindent. If the cursor
+# was already at the indent didn't change after calling reindent, indent one more level.
+#
+class JoveIndentCommand(JoveTextCommand):
+    def run_cmd(self, jove):
+        point = jove.get_point()
+        indent,cursor = jove.get_line_indent(point)
+        jove.set_status("Indent at %s, within=%s, at=%s" % (indent, cursor <= indent, cursor == indent))
+        if cursor > indent:
+            jove.run_command("reindent", {})
+        else:
+            if cursor < indent:
+                jove.run_command("move_to", {"to": "bol", "extend": False})
+            jove.run_command("reindent", {})
+
+            # now check to see if we moved, and if not, indent one more level
+            if indent == cursor:
+                new_indent,new_cursor = jove.get_line_indent(jove.get_point())
+                if new_indent == indent:
+                    # cursor was already at the indent
+                    jove.run_command("indent", {})
 
 class JoveQuitCommand(JoveTextCommand):
     def run_cmd(self, jove):
@@ -1344,6 +1666,35 @@ class JoveConvertJsonToPlistCommand(JoveTextCommand):
         self.view.replace(jove.edit, sublime.Region(0, self.view.size()), writePlistToBytes(data).decode("utf-8"))
         self.view.set_syntax_file(PLIST_SYNTAX)
 
+#
+# Function to dedup views in all the groups of the specified window. This does not close views that
+# have changes because that causes a warning to popup. So we have a monitor which dedups views
+# whenever a file is saved in order to dedup them then when it's safe.
+#
+def dedup_views(window):
+    group = window.active_group()
+    for g in range(window.num_groups()):
+        found = dict()
+        views = window.views_in_group(g)
+        active = window.active_view_in_group(g)
+        for v in views:
+            if v.is_dirty():
+                # we cannot nuke a dirty buffer or we'll get an annoying popup
+                continue
+            id = v.buffer_id()
+            if id in found:
+                if v == active:
+                    # oops - nuke the one that's already been seen and put this one in instead
+                    before = found[id]
+                    found[id] = v
+                    v = before
+                window.focus_view(v)
+                window.run_command('close')
+            else:
+                 found[id] = v
+        window.focus_view(active)
+    window.focus_group(group)
+
 def InitModule(module_name):
     def get_cmd_name(cls):
         name = cls.__name__
@@ -1364,8 +1715,8 @@ def InitModule(module_name):
             name = get_cmd_name(cls)
             cls.jove_cmd_name = name
             if cls.is_kill_cmd:
-                ViewState.kill_cmds.add(name)
+                kill_cmds.add(name)
             if cls.is_ensure_visible_cmd:
-                ViewState.ensure_visible_cmds.add(name)
+                ensure_visible_cmds.add(name)
 
 InitModule(__name__)
