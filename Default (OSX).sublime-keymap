@@ -21,37 +21,26 @@
     {"keys": ["alt+l"], "command": "jove_case_word", "args": {"direction": 1, "mode": "lower"}},
 
 
+    // commands that move and set the mark first
     {"keys": ["super+shift+."], "command": "jove_move_to", "args": {"to": "eof"}},
     {"keys": ["super+shift+,"], "command": "jove_move_to", "args": {"to": "bof"}},
     {"keys": ["super+."], "command": "jove_move_to", "args": {"to": "eow"}},
     {"keys": ["super+,"], "command": "jove_move_to", "args": {"to": "bow"}},
-    {"keys": ["super+e"], "command": "find_under_expand"},
-    {"keys": ["ctrl+a"], "command": "move_to", "args": {"to": "hardbol", "extend": false }},
-    {"keys": ["ctrl+e"], "command": "move_to", "args": {"to": "hardeol", "extend": false }},
-    {"keys": ["super+m"],  "command": "move_to",  "args": {  "to": "bol",  "extend": false }},
-    {"keys": ["ctrl+v"], "command": "move", "args": {"by": "pages", "forward": true }},
-    {"keys": ["super+v"], "command": "move", "args": {"by": "pages", "forward": false }},
-
-    {"keys": ["super+n"], "command": "next_result"},
-    {"keys": ["super+p"], "command": "prev_result"},
-
-    {"keys": ["ctrl+x", "g"], "command": "jove_goto_line"},
-    {"keys": ["super+g"], "command": "jove_goto_line"},
 
     //
     // misc
     //
     {"keys": ["ctrl+o"], "command": "jove_open_line"},
     {"keys": ["ctrl+l"], "command": "jove_center_view"},
-    {"keys": ["super+/"], "command": "toggle_comment"},
-    {"keys": ["ctrl+x", "k"], "command": "close"},
+    {"keys": ["ctrl+x", "g"], "command": "jove_goto_line"},
+    {"keys": ["super+g"], "command": "jove_goto_line"},
 
     //
     // Mark and point, kill region, kill line, yank and yank pop, deletion commands.
     //
     {"keys": ["ctrl+space"], "command": "jove_set_mark"},
     {"keys": ["ctrl+x", "ctrl+x"], "command": "jove_swap_point_and_mark"},
-    {"keys": ["ctrl+k"], "command": "jove_kill_line"},
+    {"keys": ["ctrl+k"], "command": "jove_move_then_delete", "args": {"move_cmd": "jove_move_for_kill_line"}},
     {"keys": ["ctrl+w"], "command": "jove_kill_region"},
     {"keys": ["super+w"], "command": "jove_kill_region", "args": {"is_copy": true}},
     {"keys": ["ctrl+y"], "command": "jove_yank"},
@@ -67,7 +56,6 @@
     {"keys": ["ctrl+alt+k"], "command": "jove_move_then_delete", "args": {"move_cmd": "jove_move_sexpr", "direction": 1}},
 
     {"keys": ["super+\\"], "command": "jove_delete_white_space"},
-    {"keys": ["ctrl+d"], "command": "right_delete"},
 
     // emacs-style numeric argument handling
     {"keys": ["ctrl+u"], "command": "jove_universal_argument", "args": {"value": "by_four"}},
@@ -83,24 +71,12 @@
     {"keys": ["super+9"], "command": "jove_universal_argument", "args": {"value": 9}},
     {"keys": ["super+0"], "command": "jove_universal_argument", "args": {"value": 0}},
 
-    {"keys": ["ctrl+\\"], "command": "undo"},
-    {"keys": ["ctrl+shift+\\"], "command": "redo"},
-    {"keys": ["super+r"], "command": "show_panel", "args": {"panel": "replace" }},
 
-    {"keys": ["super+h"], "command": "auto_complete"},
-    {"keys": ["ctrl+x", "ctrl+s"], "command": "save"},
-    {"keys": ["ctrl+x", "ctrl+m"], "command": "save_all"},
-    {"keys": ["ctrl+x", "ctrl+f"], "command": "i_opener"},
-    {"keys": ["ctrl+z"], "command": "scroll_lines", "args": {"amount": -1 }},
-
-    {"keys": ["super+z"], "command": "scroll_lines", "args": {"amount": 1 }},
-    {"keys": ["ctrl+x", "ctrl+e"], "command": "build", "args": {"name": "make_deploy" }},
     {"keys": ["super+["], "command": "jove_shift_region", "args": {"direction": -1}},
     {"keys": ["super+]"], "command": "jove_shift_region", "args": {"direction": 1}},
-    {"keys": ["super+j"], "command": "wrap_lines", "args": {"width": 100}},
 
     //////////////////////////////
-    // Begin incremental search //
+    // Begin I-search //
     //////////////////////////////
     {"keys": ["ctrl+s"], "command": "jove_inc_search", "args": {"forward": true, "regex": false}},
     {"keys": ["ctrl+r"], "command": "jove_inc_search", "args": {"forward": false, "regex": false}},
@@ -119,9 +95,12 @@
     {"keys": ["backspace"], "command": "jove_inc_search", "args": {"cmd": "pop"},
         "context": [ {"key": "i_search_active"} ]
     },
+    {"keys": ["super+a"], "command": "jove_inc_search", "args": {"cmd": "keep_all"},
+        "context": [ {"key": "i_search_active"} ]
+    },
 
     ////////////////////////////
-    // End incremental search //
+    // End I-search //
     ////////////////////////////
 
 
@@ -150,5 +129,4 @@
     {"keys": ["super+shift+]"], "command": "jove_pane_cmd", "args": {"cmd": "move", "direction": "right"}},
 
     {"keys": ["ctrl+x", "super+s"], "command": "jove_show_scope"},
-    {"keys": ["shift+super+-"], "command": "decrease_font_size"},
 ]

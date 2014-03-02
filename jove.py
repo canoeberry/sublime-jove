@@ -4,8 +4,6 @@
 # - implement a build command which lets me specify the make command I want to run
 # - implement forward/backward "defun" via scope selectors
 # - implement forward/backward class definition via scope selectors
-# - delete blank lines would be nice
-# - quit command should erase the main selection as well
 # - make fill paragraph smart about bulleted (i.e., ones that start with "-" or "*")
 # - add support for "set mark automatically" commands
 #   - move_to brackets but not necessarily other move_to's
@@ -16,9 +14,6 @@
 # FIX
 #
 # fix comments so you can comment in the right column if no region is selected
-#
-# kill line should work with multiple cursors, but should not append to the kill ring in that case.
-# Right now it silently runs on the first cursor.
 
 import re, sys
 import functools as fu
@@ -475,6 +470,9 @@ class CmdHelper:
         for i in range(len(cursors)):
             selection.clear()
             regions = view.get_regions(key)
+            if i >= len(regions):
+                # we've deleted some cursors along the way - we're done
+                break
             cursor = regions[i]
             selection.add(cursor)
             cursor = function(cursor, *args, **kwargs)
@@ -777,16 +775,18 @@ class JoveMoveThenDeleteCommand(JoveTextCommand):
     is_ensure_visible_cmd = True
     is_kill_cmd = True
 
-    def run_cmd(self, jove, move_cmd, direction=1):
+    def run_cmd(self, jove, move_cmd, **kwargs):
         view = self.view
         selection = view.sel()
 
         # peek at the count
-        count = jove.get_count(True) * direction
+        count = jove.get_count(True)
+        if 'direction' in kwargs:
+            count *= kwargs['direction']
 
         # remember the current cursor positions
         orig_cursors = [s for s in selection]
-        view.run_command(move_cmd, {"direction": direction})
+        view.run_command(move_cmd, kwargs)
 
         # extend each cursor so we can delete the bytes, and only if there is only one region will
         # we add the data to the kill ring
@@ -1163,41 +1163,49 @@ class JovePaneCmdCommand(JoveTextCommand):
                 index = len(views) - 1
             window.focus_view(views[index])
 
-class JoveKillLineCommand(JoveTextCommand):
-    is_kill_cmd = True
-    def run_cmd(self, jove):
+#
+# Exists only to support kill-line with multiple cursors.
+#
+class JoveMoveForKillLineCommand(JoveTextCommand):
+    def run_cmd(self, jove, **kwargs):
         view = self.view
         state = jove.state
-        start = jove.get_point()
-        text,index,region = jove.get_line_info(start)
 
         if state.argument_supplied:
             # we don't support negative arguments for kill-line
             count = abs(jove.get_count())
-
-            # go down N lines
-            for i in range(abs(count)):
-                view.run_command("move", {"by": "lines", "forward": True})
-
-            end = jove.get_point()
-            if region.contains(end):
-                # same line we started on - must be on the last line of the file
-                end = region.end()
-            else:
-                # beginning of the line we ended up on
-                end = view.line(jove.get_point()).begin()
-                jove.goto_position(end, set_mark=False)
+            line_mode = True
         else:
-            end = region.end()
+            line_mode = False
 
-            # check if line is blank from here to the end
-            import re
-            if re.match(r'[ \t]*$', text[index:]):
-                end += 1
+        def advance(cursor):
+            start = cursor.b
+            text,index,region = jove.get_line_info(start)
 
-        region = sublime.Region(start, end)
-        kill_ring.add(view.substr(region), True, state.last_was_kill_cmd())
-        view.erase(jove.edit, region)
+            if line_mode:
+                # go down N lines
+                for i in range(abs(count)):
+                    view.run_command("move", {"by": "lines", "forward": True})
+
+                end = jove.get_point()
+                if region.contains(end):
+                    # same line we started on - must be on the last line of the file
+                    end = region.end()
+                else:
+                    # beginning of the line we ended up on
+                    end = view.line(jove.get_point()).begin()
+                    jove.goto_position(end, set_mark=False)
+            else:
+                end = region.end()
+
+                # check if line is blank from here to the end and if so, delete the \n as well
+                import re
+                if re.match(r'[ \t]*$', text[index:]):
+                    end += 1
+            cursor.a = cursor.b = end
+            return cursor
+
+        jove.for_each_cursor(advance)
 
 class JoveYankCommand(JoveTextCommand):
     def run_cmd(self, jove, pop=0):
@@ -1465,6 +1473,15 @@ class ISearchInfo():
                 self.push(new)
                 self.update()
 
+    def keep_all(self):
+        while self.current.regions and self.current.current_index < len(self.current.regions):
+            new = self.current.step(forward=self.current.forward, keep=True)
+            if new:
+                self.push(new)
+            else:
+                break
+        self.update()
+
     def append_from_cursor(self):
         # Figure out the contents to the right of the last region in the current selected state, and
         # append characters from there.
@@ -1569,6 +1586,8 @@ class JoveIncSearchCommand(JoveTextCommand):
                 info.pop()
             elif cmd == "append_from_cursor":
                 info.append_from_cursor()
+            elif cmd == "keep_all":
+                info.keep_all()
             else:
                 print("Not handling cmd", cmd, kwargs)
 
