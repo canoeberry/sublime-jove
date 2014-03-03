@@ -368,7 +368,7 @@ class CmdHelper:
         return re.match(r'[ \t]*$', text) is not None
 
     #
-    # Returns True if the specified pos is within a line's indent.
+    # Returns the current indent of the line containing the specified POS and the column of POS.
     #
     def get_line_indent(self, pos):
         data,col,region = self.get_line_info(pos)
@@ -452,6 +452,8 @@ class CmdHelper:
     #
     # The called function is supposed to return a new cursor position or None, in which case value
     # is taken from the view itself.
+    #
+    # REMIND: This isn't how it currently works!
     #
     # After the function is run on all the cursors, the view's multi-cursor state is restored with
     # new values for the cursor.
@@ -559,7 +561,8 @@ class CmdHelper:
         return self.get_point()
 
 #
-# here we put a bunch of useful helpers for moving around and manipulating buffers
+# The baseclass for JOVE commands. This sets up state, creates a helper, processes the universal
+# argument, and then calls the run_cmd method, which subclasses should override.
 #
 class JoveTextCommand(sublime_plugin.TextCommand):
     should_reset_target_column = False
@@ -591,7 +594,9 @@ class JoveTextCommand(sublime_plugin.TextCommand):
             if self.should_reset_target_column:
                 jove.reset_target_column()
 
-
+#
+# Calls run command a specified number of times.
+#
 class JoveDoTimesCommand(JoveTextCommand):
     def run_cmd(self, jove, cmd, _times, **args):
         view = self.view
@@ -644,7 +649,7 @@ class JoveMoveWordCommand(JoveTextCommand):
 
 #
 # Advance to the beginning (or end if going backward) word unless already positioned at a word
-# character. This can be used to setup for commands like upper/lower/capitalize words. This ignores
+# character. This can be used as setup for commands like upper/lower/capitalize words. This ignores
 # the argument count.
 #
 class JoveToWordCommand(JoveTextCommand):
@@ -681,6 +686,7 @@ class JoveCaseWordCommand(JoveTextCommand):
 
         def case_word(cursor):
             if direction < 0:
+                # modify the N words before point by going back N words first
                 orig_point = cursor.a
                 saved = jove.save_region("tmp")
                 for i in range(count):
@@ -692,8 +698,8 @@ class JoveCaseWordCommand(JoveTextCommand):
                 jove.run_command('jove_to_word', args)
                 cursor.a = jove.get_point()
 
-                # stretch the selection to the end of the word, making sure we do zip past our start
-                # if we were going backwards
+                # stretch the selection to the end of the word, making sure we don't zip past our
+                # start if we were going backwards
                 jove.run_command('jove_move_word', args)
                 cursor.b = jove.get_point()
                 if direction < 0 and cursor.b > orig_point:
@@ -771,6 +777,12 @@ class JoveMoveSexprCommand(JoveTextCommand):
         for c in range(count):
             jove.for_each_cursor(advance, first=(c == 0))
 
+#
+# This command remembers all the current cursor positions, executes a command on all the cursors,
+# and then deletes all the data between the two.
+#
+# If there's only one selection, the deleted data is added to the kill ring appropriately.
+#
 class JoveMoveThenDeleteCommand(JoveTextCommand):
     is_ensure_visible_cmd = True
     is_kill_cmd = True
@@ -814,8 +826,6 @@ class JoveGotoLineCommand(JoveTextCommand):
             self.run_window_command("show_overlay", {"overlay": "goto", "text": ":"})
 
 class JoveDeleteWhiteSpaceCommand(JoveTextCommand):
-    """Deletes white space around point like in emacs."""
-
     def run_cmd(self, jove):
         jove.for_each_cursor(self.delete_white_space, jove)
 
@@ -965,36 +975,6 @@ class JoveKillRegionCommand(JoveTextCommand):
                 jove.set_status("Copied %d bytes" % (bytes,))
             jove.toggle_active_mark_mode(False)
 
-class JoveTravelToPaneCommand(sublime_plugin.WindowCommand):
-    def run(self, direction):
-        window = sublime.active_window()
-        ViewState.current.reset()
-        num = window.num_groups()
-        active = window.active_group()
-        dir = -1 if direction == "up" else 1
-        active += dir
-        if active >= num:
-            active = 0
-        elif active < 0:
-            active = num - 1
-        window.focus_group(active)
-
-class JoveDestroyPanesCommand(sublime_plugin.WindowCommand):
-    def run(self, pane):
-        window = self.window
-        if pane == 'self':
-            window.run_command("destroy_pane", {"direction": "self"})
-        else:
-            window = sublime.active_window()
-            active = window.active_group()
-            cnt = window.num_groups()
-            while window.active_group() > 0 and cnt > 0:
-                cnt -= 1
-                window.run_command("destroy_pane", {"direction": "up"})
-            while window.num_groups() > 1 and cnt > 0:
-                cnt -= 1
-                window.run_command("destroy_pane", {"direction": "down"})
-
 class JovePaneCmdCommand(JoveTextCommand):
     def run_cmd(self, jove, cmd, **kwargs):
         view = self.view
@@ -1010,6 +990,9 @@ class JovePaneCmdCommand(JoveTextCommand):
         else:
             print("Unknown command")
 
+    #
+    # Grow the current selected window group (pane). Amount is usually 1 or -1 for grow and shrink.
+    #
     def grow(self, window, jove, amount):
         def rows_to_sizes(rows):
             sizes = []
@@ -1050,6 +1033,10 @@ class JovePaneCmdCommand(JoveTextCommand):
         window.set_layout(layout)
         window.active_view_in_group(other).show(jove.get_point())
 
+    #
+    # Split the current pane in half. Clone the current view into the new pane. Refuses to split if
+    # the resulting windows would be too small.
+    #
     def split(self, window, jove):
         # For reference: this is what a layout looks like
         # {'cells': [[0, 0, 1, 1], [0, 1, 1, 2], [0, 2, 1, 3]], 'cols': [0.0, 1.0], 'rows': [0.0, 0.3097919170673077, 0.6548959585336538, 1.0]}
@@ -1072,20 +1059,21 @@ class JovePaneCmdCommand(JoveTextCommand):
         layout['cells'] = [[0, index, 1, index + 1] for index in range(len(rows) - 1)]
         window.set_layout(layout)
 
-        # look for another view in the current group that is display this file
+        # look for another view in the current group that is already displaying this file
         new_view = None
         for v in window.views_in_group(current):
             if v != view and v.buffer_id() == view.buffer_id():
                 new_view = v
                 break
         if new_view is None:
-            # now clone the current view into the new pane without messing up the current view
+            # couldn't find an existing view so we have to clone the current one
             window.run_command("clone_file")
+
+            # the cloned view becomes the new active view
             new_view = window.active_view()
 
-        # move the new view into the new group
+        # move the new view into the new group (current + 1)
         window.set_view_index(new_view, current + 1, 0)
-
 
         # make sure the original view is the focus in the original pane
         window.focus_view(view)
